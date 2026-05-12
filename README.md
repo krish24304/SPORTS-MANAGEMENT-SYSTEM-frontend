@@ -1,38 +1,80 @@
 # Sports Management System
 
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+A modern college sports management platform built using Next.js, TypeScript, and Tailwind CSS.
 
-## Getting Started
+This project is focused on solving real-world college sports management problems such as:
 
-First, run the development server:
+- sports equipment tracking
+- slot booking
+- inventory management
+- student access
+- admin control systems
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Features
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Student Features
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- View available sports
+- Check equipment availability
+- Search sports instantly
+- View slot availability
+- Swimming pass system (planned)
 
-## Learn More
+### Admin Features
 
-To learn more about Next.js, take a look at the following resources:
+- Manage sports inventory
+- Update equipment status
+- Manage announcements
+- Control slot bookings
+- Add or remove sports
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Tech Stack
 
-## Deploy on Vercel
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
+- Git & GitHub
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Current Progress
+
+### Completed
+
+- Frontend setup
+- Responsive homepage
+- Navbar component
+- Sports dashboard
+- Dynamic sports cards
+- Search functionality
+- GitHub integration
+
+### In Progress
+
+- Authentication system
+- Admin dashboard
+- Booking system
+- Backend integration
+
+---
+
+## Future Goals
+
+- PostgreSQL database integration
+- Prisma ORM
+- Authentication & authorization
+- Real-time inventory updates
+- Online slot booking
+- Payment system for swimming passes
+- Mobile responsive dashboard
+
+---
+
+## Author
+
+Krish Anand
