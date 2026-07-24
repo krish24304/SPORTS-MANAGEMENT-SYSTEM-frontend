@@ -1,80 +1,98 @@
 # Sports Management System
 
-A modern college sports management platform built using Next.js, TypeScript, and Tailwind CSS.
+A Sports Management System designed to simplify how colleges manage sports facilities, resources, bookings, and administration.
 
-This project is focused on solving real-world college sports management problems such as:
-
-- sports equipment tracking
-- slot booking
-- inventory management
-- student access
-- admin control systems
+This project focuses on replacing manual processes with a centralised digital platform for students, staff, and administrators.
 
 ---
 
-## Features
+## Project Overview
 
-### Student Features
+The system is built around three main roles:
 
-- View available sports
-- Check equipment availability
-- Search sports instantly
-- View slot availability
-- Swimming pass system (planned)
+- Students
+- Staff
+- Administrators
 
-### Admin Features
-
-- Manage sports inventory
-- Update equipment status
-- Manage announcements
-- Control slot bookings
-- Add or remove sports
+Each role has its own dashboard and tools to manage sports-related activities efficiently.
 
 ---
 
-## Tech Stack
+# Features
+
+## Student
+
+- Browse available sports
+- View available facilities
+- Book sports slots
+- View booking history
+- Manage profile
+
+## Staff
+
+- Manage daily bookings
+- View reservations
+- Handle slot operations
+- Manage returns
+
+## Administrator
+
+- Create and manage sports
+- Manage resources
+- Manage resource units
+- Schedule maintenance
+- Create notices
+- Manage bookings
+- Manage team reservations
+- View dashboard statistics
+
+---
+
+# Current Implementation
+
+The current project includes:
+
+- Authentication pages
+- Admin dashboard
+- Student dashboard
+- Staff dashboard
+- Sport management
+- Slot management
+- Team reservation module
+- Resource management
+- Maintenance management
+- Responsive UI
+- Backend APIs using Express
+- Prisma database integration
+
+---
+
+# Tech Stack
+
+### Frontend
 
 - Next.js
 - React
 - TypeScript
 - Tailwind CSS
-- Git & GitHub
 
----
+### Backend
 
-## Current Progress
-
-### Completed
-
-- Frontend setup
-- Responsive homepage
-- Navbar component
-- Sports dashboard
-- Dynamic sports cards
-- Search functionality
-- GitHub integration
-
-### In Progress
-
-- Authentication system
-- Admin dashboard
-- Booking system
-- Backend integration
-
----
-
-## Future Goals
-
-- PostgreSQL database integration
+- Node.js
+- Express.js
 - Prisma ORM
-- Authentication & authorization
-- Real-time inventory updates
-- Online slot booking
-- Payment system for swimming passes
-- Mobile responsive dashboard
+- SQLite (development)
 
 ---
 
-## Author
+# Project Status
 
-Krish Anand
+This project is currently a working prototype demonstrating the overall architecture and workflow of a college sports management platform.
+
+Several modules are functional, while others are still under development.
+
+---
+
+# Author
+
+**Krish Anand**
