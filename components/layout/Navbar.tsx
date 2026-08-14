@@ -32,27 +32,33 @@ export default function Navbar() {
 
       <div className="max-w-7xl mx-auto px-8 py-5 flex items-center justify-between">
 
-        {/* LOGO */}
-
         <Link
-          href="/sports"
-          className="text-3xl font-black tracking-tight"
-        >
-
-          Sports Management System
-
-        </Link>
+  href={
+    user?.role === "student"
+      ? "/sports"
+      : user?.role === "staff"
+      ? "/staff"
+      : user?.role === "admin"
+      ? "/admin"
+      : "/"
+  }
+  className="text-3xl font-black tracking-tight"
+>
+  Sports Management System
+</Link>
 
         {/* NAVIGATION */}
 
         <div className="flex items-center gap-5">
 
-          <Link
-            href="/sports"
-            className="text-zinc-300 hover:text-white transition"
-          >
-            Sports
-          </Link>
+            {user?.role === "student" && (
+  <Link
+    href="/sports"
+    className="text-zinc-300 hover:text-white transition"
+  >
+    Sports
+  </Link>
+)}
 
           <Link
             href="/history"

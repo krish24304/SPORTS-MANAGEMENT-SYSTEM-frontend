@@ -214,13 +214,15 @@ const fetchSports = async () => {
             ? customResourceType
             : resourceType,
     totalCourts,
+    resourceUnits,
 }),
       }
     );
 
     if (!response.ok) {
-      throw new Error("Failed to create sport");
-    }
+    console.log(await response.text());
+    throw new Error("Failed to create sport");
+}
 
     await fetchSports();
 
@@ -693,21 +695,7 @@ placeholder="Search sports, resources, staff..."
               outline-none
             "
           />
-        {sports
-          .filter((sport) =>
-            sport.name.toLowerCase().includes(search.toLowerCase())
-          )
-          .map((sport) => (
-            <div
-              key={`sj;earch-${sport.id}`}
-              className="py-4 border-b border-zinc-800"
-            >
-              <p className="font-semibold text-white">{sport.name}</p>
-              <p className="text-sm text-zinc-500">
-                {sport.resourceType || "Court"}
-              </p>
-            </div>
-          ))}
+       
         </div>
 
         <h2 className="text-4xl font-black mb-8">
@@ -719,7 +707,11 @@ placeholder="Search sports, resources, staff..."
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-            {sports.map((sport) => (
+            {sports
+  .filter((sport) =>
+    sport.name.toLowerCase().includes(search.toLowerCase())
+  )
+  .map((sport) => (
               <div
                 key={sport.id}
                 className="
@@ -2540,6 +2532,7 @@ w-full
 
 <button
   onClick={async () => {
+    
     const qty = Number(quantityInput);
 
     if (qty <= 0) {
@@ -2558,14 +2551,6 @@ w-full
         name: `${baseName} ${index + 1}`,
       }))
     );
-
-    await createResources({
-      sportId: selectedSport.id,
-      resourceType: baseName,
-      quantity: qty,
-    });
-
-    await fetchSports();
 
     setQuantitySelected(true);
     setShowQuantityModal(false);
@@ -5560,3 +5545,8 @@ animate-pulse
 
   );
 }
+
+
+
+
+

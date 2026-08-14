@@ -1008,7 +1008,7 @@ shadow-[0_0_70px_rgba(249,115,22,.15)]
                   <button
     onClick={(e) => {
         e.stopPropagation();
-        ;setShowOverviewModal(true)
+        setShowOverviewModal(true)
     }}
     className="mt-2 self-end text-xs font-semibold text-orange-400 hover:underline"
 >

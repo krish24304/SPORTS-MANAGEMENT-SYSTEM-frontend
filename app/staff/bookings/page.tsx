@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 export default function StaffBookingsPage() {
 
-  const [bookings, setBookings] =
+  const [bookings, ] =
     useState<any[]>([]);
     const [
   returnRequests,
@@ -69,7 +69,7 @@ const fetchBookings = async () => {
     const data =
       await response.json();
 
-    setBookings(data);
+    (data);
 
     const pendingReturnsResponse =
   await fetch(
@@ -205,13 +205,13 @@ const approveReturn = async (bookingId: number) => {
 
               <h3 className="text-xl font-bold">
 
-                {booking.user.name}
+                {booking.user?.name || "Unknown Student"}
 
               </h3>
 
               <p>
 
-                {booking.sport.name}
+                {booking.sport?.name || "Unknown Sport"}
 
               </p>
 
@@ -339,7 +339,7 @@ const approveReturn = async (bookingId: number) => {
 
   <div className="space-y-4">
 
-    {filteredBookings.map((booking) => (
+    {filteredBookings.map((booking: any) => (
 
       <div
         key={booking.id}
@@ -362,11 +362,11 @@ const approveReturn = async (bookingId: number) => {
           <div>
 
             <h2 className="text-xl font-black">
-              {booking.user.name}
+              {booking.user.name}{booking.user?.name || "Unknown Student"}
             </h2>
 
             <p className="text-zinc-400">
-              {booking.sport.name}
+              {booking.sport?.name || "Unknown Sport"}
             </p>
 
             <p className="text-sm text-zinc-500">
@@ -561,7 +561,7 @@ const approveReturn = async (bookingId: number) => {
 
             <p>
 
-              {booking.sport.name}
+             {booking.sport?.name || "Unknown Sport"}
 
             </p>
 
