@@ -1,62 +1,12 @@
 "use client";
 
-import Navbar from "@/components/layout/Navbar";
 import { useEffect, useState } from "react";
+import DashboardLayout from "@/components/layout/DashboardLayout";
 
 export default function ProfilePage() {
 
   const [user, setUser] = useState<any>(null);
-  const [showSportModal, setShowSportModal] =
-  useState(false);
 
-const [sportName, setSportName] = useState("");
-const [courts, setCourts] = useState(1);
-const [hasSlotSystem, setHasSlotSystem] =
-  useState(false);
-
-const [slotDurationMinutes, setSlotDurationMinutes] =
-  useState(30);
-  const [slotCapacity, setSlotCapacity] =
-  useState(1);
-const handleAddSport = async () => {
-  console.log({"Create button clicked": true});
-  try {
-
-    await fetch(
-      "http://localhost:5000/sports",
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          name: sportName,
-          totalCourts: courts,
-          availableCourts: courts,
-          hasSlotSystem: true,
-          slotDurationMinutes,
-          hasDynamicBooking: true,
-        }),
-      }
-    );
-
-    alert("Sport Added");
-
-    setShowSportModal(false);
-
-    setSportName("");
-
-    setCourts(1);
-
-  } catch (error) {
-
-    console.log(error);
-
-  }
-
-};
 
 useEffect(() => {
 
@@ -72,13 +22,9 @@ useEffect(() => {
 }, []);
 
   return (
+  <DashboardLayout title="Profile">
 
-    <main className="min-h-screen bg-black text-white">
-
-      <Navbar />
-      
-      <div className="max-w-7xl mx-auto px-8 py-10">
-
+    <div className="max-w-7xl mx-auto">
         <h1 className="text-5xl font-black mb-10">
           User Profile
         </h1>
@@ -159,7 +105,7 @@ useEffect(() => {
 
       </div>
 
-    </main>
+    </DashboardLayout>
 
   );
 }

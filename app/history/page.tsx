@@ -1,332 +1,437 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Navbar from "@/components/layout/Navbar";
+import { useEffect, useMemo, useState } from "react";
+import { History, RotateCcw, Search } from "lucide-react";
+
+import DashboardLayout from "@/components/layout/DashboardLayout";
+import { getUser } from "@/lib/auth";
+
+type Booking = {
+  id: number;
+  status: string;
+  bookingType?: string;
+  gearOnly?: boolean;
+  createdAt?: string;
+  bookedAt?: string;
+  returnedAt?: string;
+  sport?: {
+    name?: string;
+  };
+  slot?: {
+    startTime?: string;
+    endTime?: string;
+  };
+};
 
 export default function HistoryPage() {
-  const [searchName, setSearchName] =
-  useState("");
-
-const [selectedSport, setSelectedSport] =
-  useState("");
-
-const [selectedStatus, setSelectedStatus] =
-  useState("");
-
-const [fromDate, setFromDate] =
-  useState("");
-
-const [toDate, setToDate] =
-  useState("");
-  const [history, setHistory] = useState<any[]>([]);
+  const [history, setHistory] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [searchName, setSearchName] = useState("");
+  const [selectedSport, setSelectedSport] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
   const fetchHistory = async () => {
-
     try {
+      const user = getUser();
 
-      const user = JSON.parse(
-        localStorage.getItem("user") || "{}"
-      );
-
-      if (!user?.id) 
+      if (!user?.id) {
         setHistory([]);
-  setLoading(false);
         return;
+      }
 
       const response = await fetch(
         `http://localhost:5000/bookings/${user.id}`
       );
 
+      if (!response.ok) {
+        throw new Error("Failed to fetch history");
+      }
+
       const data = await response.json();
 
-console.log(data);
-
-if (Array.isArray(data)) {
-
-  setHistory(data);
-
-} else {
-
-  console.log("History API Error:", data);
-
-  setHistory([]);
-
-}
-
+      setHistory(Array.isArray(data) ? data : []);
     } catch (error) {
-
-      console.log(error);
-
+      console.error("History error:", error);
+      setHistory([]);
     } finally {
-
       setLoading(false);
-
     }
-
   };
 
   useEffect(() => {
-
     fetchHistory();
-
   }, []);
 
-  // RETURN REQUEST
-
-  const handleReturnRequest = async (
-    bookingId: number
-  ) => {
-
+  const handleReturnRequest = async (bookingId: number) => {
     try {
-
       const response = await fetch(
-
         `http://localhost:5000/return-request/${bookingId}`,
-
         {
           method: "PUT",
         }
-
       );
 
       if (!response.ok) {
-
-        throw new Error("Return failed");
-
+        throw new Error("Return request failed");
       }
 
-      alert("Return Request Sent");
-
+      alert("Return request sent.");
       fetchHistory();
-
     } catch (error) {
-
-      console.log(error);
-
-      alert("Return Failed");
-
+      console.error(error);
+      alert("Return request failed.");
     }
-
   };
 
-  if (loading) {
+  const sports = useMemo(() => {
+    return Array.from(
+      new Set(
+        history
+          .map((booking) => booking.sport?.name)
+          .filter(Boolean)
+      )
+    ) as string[];
+  }, [history]);
 
-    return (
-
-      <main className="min-h-screen bg-black text-white">
-
-        <Navbar />
-
-        <div className="p-10 text-3xl">
-          Loading...
-        </div>
-
-      </main>
-
+  const statuses = useMemo(() => {
+    return Array.from(
+      new Set(history.map((booking) => booking.status))
     );
+  }, [history]);
 
-  }
-  const filteredBookings =
-  history.filter((booking) => {
+  const filteredBookings = useMemo(() => {
+    return history.filter((booking) => {
+      const sportName = booking.sport?.name || "";
 
-    const matchesName =
-      booking.user.name
+      const matchesName = sportName
         .toLowerCase()
-        .includes(
-          searchName.toLowerCase()
-        );
+        .includes(searchName.toLowerCase());
 
-    const matchesSport =
-      selectedSport
-        ? booking.sport.name === selectedSport
+      const matchesSport = selectedSport
+        ? sportName === selectedSport
         : true;
 
-    const matchesStatus =
-      selectedStatus
+      const matchesStatus = selectedStatus
         ? booking.status === selectedStatus
         : true;
 
-    const bookingDate =
-      new Date(booking.bookedAt);
+      const rawDate =
+        booking.bookedAt || booking.createdAt;
 
-    const matchesFrom =
-      fromDate
-        ? bookingDate >=
-          new Date(fromDate)
+      const bookingDate = rawDate
+        ? new Date(rawDate)
+        : null;
+
+      const matchesFrom = fromDate
+        ? bookingDate
+          ? bookingDate >= new Date(`${fromDate}T00:00:00`)
+          : false
         : true;
 
-    const matchesTo =
-      toDate
-        ? bookingDate <=
-          new Date(toDate)
+      const matchesTo = toDate
+        ? bookingDate
+          ? bookingDate <= new Date(`${toDate}T23:59:59`)
+          : false
         : true;
 
+      return (
+        matchesName &&
+        matchesSport &&
+        matchesStatus &&
+        matchesFrom &&
+        matchesTo
+      );
+    });
+  }, [
+    history,
+    searchName,
+    selectedSport,
+    selectedStatus,
+    fromDate,
+    toDate,
+  ]);
+
+  if (loading) {
     return (
-      matchesName &&
-      matchesSport &&
-      matchesStatus &&
-      matchesFrom &&
-      matchesTo
+      <DashboardLayout title="History">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-8 text-zinc-400">
+          Loading history...
+        </div>
+      </DashboardLayout>
     );
+  }
 
-  });
   return (
+    <DashboardLayout title="History">
+      <div className="space-y-8">
 
-    <main className="min-h-screen bg-black text-white">
+        {/* HEADER */}
 
-      <Navbar />
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+              <History size={21} />
+            </div>
 
-      <div className="max-w-7xl mx-auto px-8 py-10">
+            <div>
+              <h2 className="text-2xl font-bold text-white">
+                Booking History
+              </h2>
 
-        <h1 className="text-7xl font-black mb-4">
-          Booking History
-        </h1>
+              <p className="mt-1 text-sm text-zinc-500">
+                View your previous sports activity and returns.
+              </p>
+            </div>
+          </div>
+        </div>
 
-        <p className="text-zinc-400 text-2xl mb-12">
-          View all your sports activity and returns
-        </p>
+        {/* FILTERS */}
 
-        {history.length === 0 ? (
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <Search size={17} className="text-zinc-500" />
 
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-12 text-zinc-400 text-2xl">
+            <h3 className="text-sm font-semibold text-white">
+              Filter history
+            </h3>
+          </div>
 
-            No booking history found
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
+
+            <input
+              value={searchName}
+              onChange={(event) =>
+                setSearchName(event.target.value)
+              }
+              placeholder="Search sport..."
+              className="h-10 rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-emerald-500/50"
+            />
+
+            <select
+              value={selectedSport}
+              onChange={(event) =>
+                setSelectedSport(event.target.value)
+              }
+              className="h-10 rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-300 outline-none focus:border-emerald-500/50"
+            >
+              <option value="">All sports</option>
+
+              {sports.map((sport) => (
+                <option key={sport} value={sport}>
+                  {sport}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={selectedStatus}
+              onChange={(event) =>
+                setSelectedStatus(event.target.value)
+              }
+              className="h-10 rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-300 outline-none focus:border-emerald-500/50"
+            >
+              <option value="">All statuses</option>
+
+              {statuses.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(event) =>
+                setFromDate(event.target.value)
+              }
+              className="h-10 rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-300 outline-none focus:border-emerald-500/50"
+            />
+
+            <input
+              type="date"
+              value={toDate}
+              onChange={(event) =>
+                setToDate(event.target.value)
+              }
+              className="h-10 rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-300 outline-none focus:border-emerald-500/50"
+            />
 
           </div>
 
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-xs text-zinc-500">
+              Showing {filteredBookings.length} of{" "}
+              {history.length} bookings
+            </p>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSearchName("");
+                setSelectedSport("");
+                setSelectedStatus("");
+                setFromDate("");
+                setToDate("");
+              }}
+              className="text-xs text-zinc-500 transition hover:text-emerald-400"
+            >
+              Clear filters
+            </button>
+          </div>
+        </section>
+
+        {/* BOOKINGS */}
+
+        {filteredBookings.length === 0 ? (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-10 text-center">
+            <History
+              size={30}
+              className="mx-auto text-zinc-700"
+            />
+
+            <p className="mt-3 text-sm text-zinc-500">
+              No matching booking history found.
+            </p>
+          </div>
         ) : (
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {Array.isArray(history) &&
-            history.map((item) => (
+            {filteredBookings.map((item) => {
+              const status = item.status?.toLowerCase();
 
-              <div
-                key={item.id}
-                className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8"
-              >
+              const isActive = status === "active";
+              const isPending =
+                status === "return_requested" ||
+                status === "return pending";
+              const isCompleted =
+                status === "completed" ||
+                status === "returned";
 
-                <div className="flex justify-between items-start mb-6">
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5"
+                >
+                  <div className="flex items-start justify-between gap-4">
 
-                  <div>
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.15em] text-zinc-600">
+                        Booking #{item.id}
+                      </p>
 
-                    <h2 className="text-4xl font-black mb-2">
-                      {item.sport?.name}
-                    </h2>
+                      <h3 className="mt-2 text-xl font-bold text-white">
+                        {item.sport?.name || "Unknown Sport"}
+                      </h3>
+                    </div>
 
-                    <p className="text-zinc-400">
-                      Booking #{item.id}
+                    <span className="rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1 text-xs font-medium text-zinc-300">
+                      {item.status}
+                    </span>
+                  </div>
+
+                  <div className="mt-5 space-y-3 text-sm">
+
+                    <p>
+                      <span className="text-zinc-500">
+                        Type:{" "}
+                      </span>
+
+                      <span className="text-zinc-200">
+                        {item.gearOnly
+                          ? "Gear Only"
+                          : item.bookingType || "Slot + Gear"}
+                      </span>
                     </p>
+
+                    {item.slot && (
+                      <p>
+                        <span className="text-zinc-500">
+                          Slot:{" "}
+                        </span>
+
+                        <span className="text-emerald-400">
+                          {new Date(
+                            item.slot.startTime || ""
+                          ).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}{" "}
+                          –{" "}
+                          {new Date(
+                            item.slot.endTime || ""
+                          ).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </p>
+                    )}
+
+                    {(item.bookedAt || item.createdAt) && (
+                      <p>
+                        <span className="text-zinc-500">
+                          Booked:{" "}
+                        </span>
+
+                        <span className="text-zinc-300">
+                          {new Date(
+                            item.bookedAt || item.createdAt || ""
+                          ).toLocaleString()}
+                        </span>
+                      </p>
+                    )}
+
+                    {item.returnedAt && (
+                      <p>
+                        <span className="text-zinc-500">
+                          Returned:{" "}
+                        </span>
+
+                        <span className="text-emerald-400">
+                          {new Date(
+                            item.returnedAt
+                          ).toLocaleString()}
+                        </span>
+                      </p>
+                    )}
 
                   </div>
 
-                  <span
-                    className={`px-4 py-2 rounded-full font-bold ${
-                      item.status === "Active"
-                        ? "bg-green-500/20 text-green-400"
-                        : item.status === "Return Pending"
-                        ? "bg-yellow-500/20 text-yellow-400"
-                        : item.status === "Returned"
-                        ? "bg-blue-500/20 text-blue-400"
-                        : "bg-zinc-700 text-white"
-                    }`}
-                  >
-                    {item.status}
-                  </span>
-
-                </div>
-
-                <div className="space-y-4 text-lg">
-
-                  <p>
-
-                    <span className="text-zinc-400">
-                      Booking Type:
-                    </span>
-
-                    <span className="ml-2 font-bold">
-                      {item.gearOnly
-                        ? "Gear Only"
-                        : "Slot + Gear"}
-                    </span>
-
-                  </p>
-
-                  {item.slot && (
-
-                    <p>
-
-                      <span className="text-zinc-400">
-                        Slot:
-                      </span>
-
-                      <span className="ml-2 font-bold text-green-400">
-
-                        {new Date(
-                          item.slot.startTime
-                        ).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-
-                        {" - "}
-
-                        {new Date(
-                          item.slot.endTime
-                        ).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-
-                      </span>
-
-                    </p>
-
+                  {isActive && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleReturnRequest(item.id)
+                      }
+                      className="mt-6 inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black transition hover:bg-emerald-400"
+                    >
+                      <RotateCcw size={15} />
+                      Request Return
+                    </button>
                   )}
 
-                  <p>
+                  {isPending && (
+                    <div className="mt-6 rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-400">
+                      Waiting for staff verification.
+                    </div>
+                  )}
 
-                    <span className="text-zinc-400">
-                      Created:
-                    </span>
-
-                    <span className="ml-2">
-                      {new Date(
-                        item.createdAt
-                      ).toLocaleDateString()}
-                    </span>
-
-                  </p>
-
+                  {isCompleted && (
+                    <div className="mt-6 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
+                      Booking completed.
+                    </div>
+                  )}
                 </div>
-
-                {item.status === "Active" && (
-
-                  <button
-                    onClick={() =>
-                      handleReturnRequest(item.id)
-                    }
-                    className="mt-8 bg-red-500 hover:bg-red-600 transition px-8 py-4 rounded-2xl font-black text-lg"
-                  >
-
-                    Send Return Request
-
-                  </button>
-
-                )}
-
-              </div>
-
-            ))}
+              );
+            })}
 
           </div>
-
         )}
-
       </div>
-
-    </main>
-
+    </DashboardLayout>
   );
-
 }

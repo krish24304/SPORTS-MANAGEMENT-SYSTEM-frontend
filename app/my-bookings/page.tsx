@@ -1,356 +1,290 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Navbar from "@/components/layout/Navbar";
+import {
+  CalendarCheck,
+  Clock3,
+  RotateCcw,
+  X,
+  CheckCircle2,
+} from "lucide-react";
+
+import DashboardLayout from "@/components/layout/DashboardLayout";
+import { getUser } from "@/lib/auth";
+
+type Booking = {
+  id: number;
+  status: string;
+  bookingType?: string;
+  bookedAt?: string;
+  returnedAt?: string;
+  sport?: {
+    name?: string;
+  };
+  slot?: {
+    startTime?: string;
+    endTime?: string;
+  };
+};
 
 export default function BookingsPage() {
-
-  const [bookings, setBookings] = useState<any[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchBookings = async () => {
-
     try {
-
-      const user = JSON.parse(
-        localStorage.getItem("user") || "{}"
-      );
+      const user = getUser();
 
       if (!user?.id) {
-
-        setLoading(false);
-
+        setBookings([]);
         return;
-
       }
 
       const response = await fetch(
         `http://localhost:5000/bookings/${user.id}`
       );
 
-      const data = await response.json();
-
-      if (Array.isArray(data)) {
-
-        setBookings(data);
-      } else {
-
-        console.log(data);
-        setBookings([]);
-
+      if (!response.ok) {
+        throw new Error("Failed to fetch bookings");
       }
 
+      const data = await response.json();
+
+      setBookings(Array.isArray(data) ? data : []);
     } catch (error) {
-
-      console.log(error);
-
+      console.error("Bookings error:", error);
+      setBookings([]);
     } finally {
-
       setLoading(false);
-
     }
-
   };
 
   useEffect(() => {
-
     fetchBookings();
-
   }, []);
 
-  // CANCEL BOOKING
-
-  const cancelBooking = async (
-    bookingId: number
-  ) => {
+  const cancelBooking = async (bookingId: number) => {
+    if (!confirm("Cancel this booking?")) return;
 
     try {
-
       const response = await fetch(
-
         `http://localhost:5000/cancel-booking/${bookingId}`,
-
         {
           method: "PUT",
         }
-
       );
 
       if (!response.ok) {
-
         throw new Error("Cancel failed");
-
       }
 
-      alert("Booking Cancelled");
-
+      alert("Booking cancelled.");
       fetchBookings();
-
     } catch (error) {
-
-      console.log(error);
-
-      alert("Cancel Failed");
-
+      console.error(error);
+      alert("Could not cancel booking.");
     }
-
   };
 
-  // RETURN GEAR
-
-  const returnGear = async (
-    bookingId: number
-  ) => {
-
+  const returnGear = async (bookingId: number) => {
     try {
-
       const response = await fetch(
-
         `http://localhost:5000/return-request/${bookingId}`,
-
         {
           method: "PUT",
         }
-
       );
 
       if (!response.ok) {
-
         throw new Error("Return failed");
-
       }
 
-      alert("Return Request Sent");
-
+      alert("Return request sent.");
       fetchBookings();
-
     } catch (error) {
-
-      console.log(error);
-
-      alert("Return Failed");
-
+      console.error(error);
+      alert("Could not send return request.");
     }
-
   };
 
   if (loading) {
-
     return (
-
-      <main className="min-h-screen bg-black text-white">
-
-        <Navbar />
-
-        <div className="p-10 text-3xl">
-          Loading...
+      <DashboardLayout title="My Bookings">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-8 text-sm text-zinc-500">
+          Loading bookings...
         </div>
-
-      </main>
-
+      </DashboardLayout>
     );
-
   }
 
   return (
+    <DashboardLayout title="My Bookings">
+      <div className="space-y-7">
 
-    <main className="min-h-screen bg-black text-white">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+              <CalendarCheck size={21} />
+            </div>
 
-      <Navbar />
+            <div>
+              <h2 className="text-2xl font-bold text-white">
+                My Bookings
+              </h2>
 
-      <div className="max-w-7xl mx-auto px-8 py-10">
-
-        <h1 className="text-4xl md:text-5xl font-black mb-12">
-
-          My Bookings
-
-        </h1>
+              <p className="mt-1 text-sm text-zinc-500">
+                Manage your active sports bookings.
+              </p>
+            </div>
+          </div>
+        </div>
 
         {bookings.length === 0 ? (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-10 text-center">
+            <CalendarCheck
+              size={32}
+              className="mx-auto text-zinc-700"
+            />
 
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-10 text-zinc-400 text-xl">
-
-            No bookings found
-
+            <p className="mt-3 text-sm text-zinc-500">
+              You don't have any bookings yet.
+            </p>
           </div>
-
         ) : (
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            {bookings.map((booking) => {
+              const status =
+                booking.status?.toLowerCase();
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              return (
+                <div
+                  key={booking.id}
+                  className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.15em] text-zinc-600">
+                        Booking #{booking.id}
+                      </p>
 
-            {bookings.map((booking) => (
+                      <h3 className="mt-2 text-xl font-bold text-white">
+                        {booking.sport?.name ||
+                          "Unknown Sport"}
+                      </h3>
+                    </div>
 
-              <div
-                key={booking.id}
-                className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8"
-              >
+                    <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-400">
+                      {booking.status}
+                    </span>
+                  </div>
 
-                <div className="flex justify-between items-start mb-6">
+                  <div className="mt-5 space-y-3 text-sm">
+                    {booking.slot && (
+                      <div className="flex items-center gap-2 text-zinc-400">
+                        <Clock3 size={15} />
 
-                  <div>
+                        <span>
+                          {new Date(
+                            booking.slot.startTime || ""
+                          ).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}{" "}
+                          –{" "}
+                          {new Date(
+                            booking.slot.endTime || ""
+                          ).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                    )}
 
-                    <h2 className="text-4xl font-black mb-2">
+                    <p>
+                      <span className="text-zinc-500">
+                        Type:{" "}
+                      </span>
 
-                      {booking.sport?.name}
-
-                    </h2>
-
-                    <p className="text-zinc-400">
-
-                      Booking ID #{booking.id}
-
+                      <span className="text-zinc-200">
+                        {booking.bookingType ||
+                          "Slot + Gear"}
+                      </span>
                     </p>
 
+                    {booking.bookedAt && (
+                      <p>
+                        <span className="text-zinc-500">
+                          Booked:{" "}
+                        </span>
+
+                        <span className="text-zinc-300">
+                          {new Date(
+                            booking.bookedAt
+                          ).toLocaleString()}
+                        </span>
+                      </p>
+                    )}
+
+                    {booking.returnedAt && (
+                      <p>
+                        <span className="text-zinc-500">
+                          Returned:{" "}
+                        </span>
+
+                        <span className="text-emerald-400">
+                          {new Date(
+                            booking.returnedAt
+                          ).toLocaleString()}
+                        </span>
+                      </p>
+                    )}
                   </div>
 
-                  <span className="bg-green-500/20 text-green-400 px-4 py-2 rounded-full font-bold">
+                  {status === "active" && (
+                    <div className="mt-6 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          cancelBooking(booking.id)
+                        }
+                        className="inline-flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-400 transition hover:bg-red-500/20"
+                      >
+                        <X size={15} />
+                        Cancel
+                      </button>
 
-                    {booking.status}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          returnGear(booking.id)
+                        }
+                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-black transition hover:bg-emerald-400"
+                      >
+                        <RotateCcw size={15} />
+                        Request Return
+                      </button>
+                    </div>
+                  )}
 
-                  </span>
+                  {status === "return_requested" && (
+                    <div className="mt-6 rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-400">
+                      Waiting for staff verification.
+                    </div>
+                  )}
 
+                  {status === "completed" && (
+                    <div className="mt-6 flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
+                      <CheckCircle2 size={16} />
+                      Booking completed.
+                    </div>
+                  )}
                 </div>
-
-                <div className="space-y-4 text-lg">
-
-                  <p>
-
-                    <span className="text-zinc-400">
-                      Slot:
-                    </span>
-
-                    {" "}
-
-                    {booking.slot?.startTime}
-
-                    {" - "}
-
-                    {booking.slot?.endTime}
-
-                  </p>
-
-                  <p>
-
-                    <span className="text-zinc-400">
-                      Type:
-                    </span>
-
-                    {" "}
-
-                    {booking.bookingType}
-
-                  </p>
-
-                  <p>
-
-  <span className="text-zinc-400">
-    Booked:
-  </span>
-
-  {" "}
-
-  {new Date(
-    booking.bookedAt
-  ).toLocaleString()}
-
-</p>
-
-{booking.returnedAt && (
-
-  <p>
-
-    <span className="text-zinc-400">
-      Returned:
-    </span>
-
-    {" "}
-
-    {new Date(
-      booking.returnedAt
-    ).toLocaleString()}
-
-  </p>
-
-)}
-
-                </div>
-
-                {booking.status === "active" && (
-
-                  <div className="flex gap-4 mt-8">
-
-                    <button
-                      onClick={() =>
-                        cancelBooking(booking.id)
-                      }
-                      className="bg-red-500 hover:bg-red-600 transition px-8 py-4 rounded-2xl text-lg font-bold"
-                    >
-
-                      Cancel Booking
-
-                    </button>
-
-                    <button
-                      onClick={() =>
-                        returnGear(booking.id)
-                      }
-                      className="bg-yellow-500 hover:bg-yellow-600 transition px-8 py-4 rounded-2xl text-lg font-bold text-black"
-                    >
-
-                      Request Return
-
-                    </button>
-
-                  </div>
-
-                )}
-
-                {booking.status === "return_requested" && (
-
-                  <div className="mt-8 bg-yellow-500/20 text-yellow-400 px-6 py-4 rounded-2xl font-bold">
-
-                    Waiting For Staff Verification
-
-                  </div>
-
-                )}
-
-                {booking.status === "completed" && (
-
-                  <div className="mt-8 bg-green-500/20 text-green-400 px-6 py-4 rounded-2xl font-bold">
-
-                    Booking Completed
-                    
-                  </div>
-
-                )}
-{booking.returnedAt && (
-
-  <div className="mt-3 text-green-400">
-
-    Returned At:
-
-    {" "}
-
-    {new Date(
-      booking.returnedAt
-    ).toLocaleString()}
-
-  </div>
-
-)}
-              </div>
-
-            ))}
-
+              );
+            })}
           </div>
-
         )}
-
       </div>
-
-    </main>
-
+    </DashboardLayout>
   );
-
 }

@@ -717,7 +717,7 @@ const fetchSports = async () => {
     // fetch announcements, return requests and anonymous requests from backend
     const fetchAnnouncements = async () => {
       try {
-        const res = await fetch("http://localhost:5000/announcements");
+        const res = await fetch("http://localhost:5000/notices");
         const data = await res.json();
         setAnnouncements(Array.isArray(data) ? data : []);
       } catch (err) {
@@ -6643,7 +6643,7 @@ font-semibold
 
 onClick={async () => {
   try {
-    await fetch(`http://localhost:5000/announcements/${item.id}`, { method: 'DELETE' });
+    await fetch(`http://localhost:5000/notices/${item.id}`, { method: 'DELETE' });
     setAnnouncements((prev) => prev.filter((a) => a.id !== item.id));
   } catch (err) {
     console.error('Failed to delete announcement', err);
@@ -7178,7 +7178,7 @@ focus:shadow-[0_0_30px_rgba(249,115,22,.18)]
 onClick={async () => {
   try {
     if (!announcementMessage.trim()) return;
-    const res = await fetch('http://localhost:5000/announcements', {
+    const res = await fetch('http://localhost:5000/notices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: announcementMessage, audience: announcementAudience, title: 'Announcement', expiry: announcementExpiry }),
@@ -12326,27 +12326,5 @@ animate-pulse
 
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
