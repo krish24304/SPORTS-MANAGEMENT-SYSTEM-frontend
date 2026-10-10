@@ -96,3 +96,7 @@ Several modules are functional, while others are still under development.
 # Author
 
 **Krish Anand**
+
+---
+
+Project-wide status, test results and remaining issues are kept in one place: see the [root README](../README.md).

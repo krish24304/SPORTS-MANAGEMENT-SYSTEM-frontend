@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -18,7 +19,8 @@ import {
   Sparkles,
 } from "lucide-react";
 
-import { clearUser } from "@/lib/auth";
+import { clearUser, getUser } from "@/lib/auth";
+import { useSuggestionUnread } from "@/lib/suggestions";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -69,6 +71,19 @@ export default function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [user, setUser] = useState<any>(null);
+  const unreadSuggestions = useSuggestionUnread();
+
+  useEffect(() => {
+    setUser(getUser());
+  }, []);
+
+  const portalLabel =
+    user?.role === "admin"
+      ? "Admin Portal"
+      : user?.role === "staff"
+      ? "Staff Portal"
+      : "Student Portal";
 
   const isItemActive = (href: string) =>
     pathname === href ||
@@ -262,7 +277,7 @@ export default function Sidebar({
               </p>
 
               <p className="mt-0.5 text-[11px] text-zinc-500">
-                Student Portal
+                {portalLabel}
               </p>
             </div>
           )}
@@ -368,16 +383,42 @@ export default function Sidebar({
               : "gap-3 px-3"
           }`}
         >
-          <MessageSquarePlus
-            size={19}
-            strokeWidth={1.8}
-            className="shrink-0 text-zinc-500 transition-colors group-hover:text-emerald-400"
-          />
+          <span className="relative shrink-0">
+            <MessageSquarePlus
+              size={19}
+              strokeWidth={1.8}
+              className={`transition-colors group-hover:text-emerald-400 ${
+                unreadSuggestions > 0 ? "text-emerald-400" : "text-zinc-500"
+              }`}
+            />
+
+            {unreadSuggestions > 0 && collapsed && (
+              <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full border border-[#080b09] bg-emerald-400" />
+              </span>
+            )}
+          </span>
 
           {!collapsed && (
             <span className="text-sm font-medium">
               Suggestion
             </span>
+          )}
+
+          {!collapsed && unreadSuggestions > 0 && (
+            <motion.span
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", stiffness: 400, damping: 15 }}
+              className="ml-auto flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-bold text-emerald-300"
+            >
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              </span>
+              {unreadSuggestions > 99 ? "99+" : unreadSuggestions}
+            </motion.span>
           )}
 
           {collapsed && (

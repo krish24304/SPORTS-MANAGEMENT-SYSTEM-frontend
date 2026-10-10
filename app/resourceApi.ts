@@ -1,3 +1,5 @@
+import { getAuthHeaders } from "@/lib/auth";
+
 const API = "http://localhost:5000";
 
 export async function createResources(data: {
@@ -9,6 +11,7 @@ export async function createResources(data: {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            ...getAuthHeaders(),
         },
         body: JSON.stringify(data),
     });
@@ -26,6 +29,7 @@ export async function renameResourceUnit(
         method: "PUT",
         headers: {
             "Content-Type": "application/json",
+            ...getAuthHeaders(),
         },
         body: JSON.stringify({ name }),
     });
@@ -38,6 +42,7 @@ export async function renameResourceUnit(
 export async function deleteResourceUnit(id: number) {
     const res = await fetch(`${API}/resource-units/${id}`, {
         method: "DELETE",
+        headers: getAuthHeaders(),
     });
 
     if (!res.ok) throw new Error("Delete failed");

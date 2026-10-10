@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { History, RotateCcw, Search } from "lucide-react";
 
 import DashboardLayout from "@/components/layout/DashboardLayout";
-import { getUser } from "@/lib/auth";
+import { getUser, getAuthHeaders } from "@/lib/auth";
 
 type Booking = {
   id: number;
@@ -43,7 +43,8 @@ export default function HistoryPage() {
       }
 
       const response = await fetch(
-        `http://localhost:5000/bookings/${user.id}`
+        `http://localhost:5000/users/${user.id}/bookings`,
+        { headers: { ...getAuthHeaders() } }
       );
 
       if (!response.ok) {
@@ -71,6 +72,7 @@ export default function HistoryPage() {
         `http://localhost:5000/return-request/${bookingId}`,
         {
           method: "PUT",
+          headers: { ...getAuthHeaders() },
         }
       );
 
@@ -86,7 +88,24 @@ export default function HistoryPage() {
     }
   };
 
+  const [allSportNames, setAllSportNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("http://localhost:5000/sports", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : []))
+      .then((data: { name: string }[]) => {
+        if (Array.isArray(data)) {
+          setAllSportNames(
+            data.map((sport) => sport.name).sort((a, b) => a.localeCompare(b))
+          );
+        }
+      })
+      .catch(() => setAllSportNames([]));
+  }, []);
+
   const sports = useMemo(() => {
+    if (allSportNames.length > 0) return allSportNames;
+
     return Array.from(
       new Set(
         history
@@ -94,7 +113,7 @@ export default function HistoryPage() {
           .filter(Boolean)
       )
     ) as string[];
-  }, [history]);
+  }, [allSportNames, history]);
 
   const statuses = useMemo(() => {
     return Array.from(

@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getAuthHeaders, authFetch, getUser } from "@/lib/auth";
+import AnonymousRequestsModal from "@/components/suggestions/AnonymousRequestsModal";
+import { useSuggestionUnread } from "@/lib/suggestions";
+import ReturnRequestsModal from "@/components/staff/ReturnRequestsModal";
+import ReturnDetailsModal from "@/components/staff/ReturnDetailsModal";
 import Navbar from "@/components/layout/Navbar";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faGear } from "@fortawesome/free-solid-svg-icons";
@@ -37,6 +42,12 @@ Package,
   Timer,
   CircleUserRound,
   ArrowLeft,
+  CircleDot,
+  Swords,
+  Crosshair,
+  Table2,
+  Undo2,
+  Target,
 } from "lucide-react";
 import {
     createResources,
@@ -225,6 +236,39 @@ const getSportName = (booking: any): string => {
 
   return booking.sportName || "Unknown Sport";
 };
+function toReturnRow(booking: any) {
+  const gears: any[] = Array.isArray(booking.gears) ? booking.gears : [];
+  const isGear = booking.bookingType === "gear" || gears.length > 0;
+  const photo = booking.user?.idCardPhoto ? String(booking.user.idCardPhoto) : null;
+  const requested = booking.returnRequestedAt ? new Date(booking.returnRequestedAt) : null;
+  const slotStart = booking.startTime ?? booking.slot?.startTime ?? null;
+  const slotEnd = booking.endTime ?? booking.slot?.endTime ?? null;
+
+  return {
+    id: booking.id,
+    student: booking.user?.name ?? "Student",
+    resourceType: isGear ? "Gear" : "Slot",
+    gear: gears.length
+      ? gears.map((g) => `${g.name} × ${g.quantity}`).join(", ")
+      : "Equipment",
+    court: booking.resourceUnit?.name ?? booking.sport?.name ?? "Sport",
+    sport: booking.sport?.name ?? "",
+    borrowTime: slotStart
+      ? `${new Date(slotStart).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}${slotEnd ? ` – ${new Date(slotEnd).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`
+      : new Date(booking.bookedAt).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }),
+    requestDate: requested ? requested.toLocaleDateString() : "",
+    reason: booking.notes ?? "",
+    requestedAt: booking.returnRequestedAt ?? null,
+    requestTime: requested
+      ? requested.toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+      : "",
+    idCard: photo ? (photo.startsWith("http") ? photo : `http://localhost:5000${photo}`) : null,
+    bookingId: booking.id,
+    gearItems: gears,
+    status: "Return requested",
+  };
+}
+
 export default function AdminSportsPage() {
   const [sports, setSports] = useState<any[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
@@ -236,7 +280,11 @@ const [showBookingDetails, setShowBookingDetails] = useState(false);
 const [showAnnouncement,setShowAnnouncement]=useState(false);
 const [announcementTitle, setAnnouncementTitle] = useState("");
 const [announcementMessage, setAnnouncementMessage] = useState("");
-const [announcementAudience, setAnnouncementAudience] = useState("All");
+const [announcementAudience, setAnnouncementAudience] = useState("everyone");
+const [announcementType, setAnnouncementType] = useState("announcement");
+const [announcementSportId, setAnnouncementSportId] = useState("");
+const [announcementError, setAnnouncementError] = useState("");
+const [announcementSubmitting, setAnnouncementSubmitting] = useState(false);
 const [announcementExpiry, setAnnouncementExpiry] =useState("");
 const [showCreateAnnouncement, setShowCreateAnnouncement] =useState(false);
 const [announcements, setAnnouncements] = useState<any[]>([]);
@@ -254,13 +302,8 @@ const [returnRequests, setReturnRequests] = useState<any[]>([]);
 /* ================= STAFF REQUESTS ================= */
 
 const [showRequests, setShowRequests] = useState(false);
-
-const [showCreateRequest, setShowCreateRequest] = useState(false);
-
-const [requestMessage, setRequestMessage] = useState("");
-
-
-const [requests, setRequests] = useState<any[]>([]);
+const [dashStats, setDashStats] = useState<{ sports: number; activeSports: number; staff: number; students: number; resources: number; bookings: number } | null>(null);
+const unreadRequests = useSuggestionUnread();
 const [customResourceType, setCustomResourceType] = useState("");
 const [selectedReturn, setSelectedReturn] = useState<any | null>(null);
 const [resourceType, setResourceType] = useState("Court");  
@@ -345,7 +388,13 @@ const [reservationStartDate,setReservationStartDate]=useState("");
 const [reservationEndDate,setReservationEndDate]=useState("");
 const [resourceToastMessage,setResourceToastMessage]=useState("");
 const [showMaintenancePopup, setShowMaintenancePopup] = useState(false);
-const [maintenanceEnabled,setMaintenanceEnabled]=useState(false);
+const [maintenanceScope, setMaintenanceScope] = useState<"resources" | "entire">("resources");
+const [maintenanceSaving, setMaintenanceSaving] = useState(false);
+const [maintenanceWindowStart, setMaintenanceWindowStart] = useState("");
+const [maintenanceWindowEnd, setMaintenanceWindowEnd] = useState("");
+const [activeMaintenanceWindows, setActiveMaintenanceWindows] = useState<any[]>([]);
+const [showActiveMaintenanceList, setShowActiveMaintenanceList] = useState(false);
+const [maintenanceConflict, setMaintenanceConflict] = useState<{ conflicts: any[] } | null>(null);
 
 const [maintenanceMessage,setMaintenanceMessage]=useState("");
 
@@ -371,11 +420,14 @@ const [showReturnRequests, setShowReturnRequests] = useState(false);
 
 const [returnSearch, setReturnSearch] = useState("");
 
-const [selectedRequestDate, setSelectedRequestDate] = useState("Today");
+const [selectedRequestSport, setSelectedRequestSport] = useState("All");
+const [refreshingReturns, setRefreshingReturns] = useState(false);
 
 // ================= LIVE BOOKINGS STATE =================
 
 const [showLiveBookings, setShowLiveBookings] = useState(false);
+const [loadErrors, setLoadErrors] = useState<Record<string, string | undefined>>({});
+const [returnsReady, setReturnsReady] = useState(false);
 const [showLiveBookingDetails, setShowLiveBookingDetails] = useState(false);
 const [selectedLiveBooking, setSelectedLiveBooking] =
   useState<any | null>(null);
@@ -501,51 +553,73 @@ const getBookingSummary = (booking: any) => {
 };
 
 
-const getBookingTime = (booking: any) => {
-  const slotSystem =
-    booking?.slotSystem ??
-    booking?.isSlotSystem ??
-    booking?.slotBased ??
-    booking?.sport?.slotSystem ??
-    booking?.sport?.isSlotSystem ??
-    booking?.sport?.slotBased ??
-    booking?.sport?.hasSlotSystem ??
-    false;
+const formatClock = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-  if (slotSystem) {
-    return (
-      booking?.slotTime ||
-      booking?.slot ||
-      booking?.timeSlot ||
-      `${booking?.startTime || "--"} - ${
-        booking?.endTime || "--"
-      }`
-    );
+const describeLoadError = (status: number | null) => {
+  if (status === null) {
+    return "Can't reach the backend at localhost:5000. Start the backend, then press Refresh.";
   }
-
-  if (booking?.startTime && booking?.endTime) {
-    return `${booking.startTime} - ${booking.endTime}`;
+  if (status === 401) {
+    return "You are not signed in on this browser. Sign in as staff at /login, then press Refresh.";
   }
-
-  if (booking?.bookingTime) {
-    return booking.bookingTime;
+  if (status === 403) {
+    const role = getUser()?.role ?? "unknown";
+    return `This account (${role}) cannot see staff data. Sign in with a staff or admin account.`;
   }
-
-  if (booking?.time) {
-    return booking.time;
-  }
-
-  return "Time not available";
+  return `The server returned an error (${status}). Check the backend terminal.`;
 };
 
+const formatDayShort = (iso: string) =>
+  new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+
+const getBookingTime = (booking: any) => {
+  const start = booking?.startTime ?? booking?.slot?.startTime ?? null;
+  const end = booking?.endTime ?? booking?.slot?.endTime ?? null;
+
+  if (start) {
+    const range = end ? `${formatClock(start)} – ${formatClock(end)}` : formatClock(start);
+    return `${formatDayShort(start)} · ${range}`;
+  }
+
+  if (booking?.bookedAt) {
+    return `${formatDayShort(booking.bookedAt)} · booked ${formatClock(booking.bookedAt)}`;
+  }
+
+  return "No time set";
+};
+
+const getGearVisual = (name: string) => {
+  const n = name.toLowerCase();
+  if (/ball|stack/.test(n)) return { Icon: CircleDot, color: "text-cyan-300" };
+  if (/racket|racquet|bat|stick/.test(n)) return { Icon: Swords, color: "text-amber-300" };
+  if (/stump/.test(n)) return { Icon: Crosshair, color: "text-emerald-300" };
+  if (/pool|snooker|cue/.test(n)) return { Icon: Target, color: "text-violet-300" };
+  if (/table|\btt\b/.test(n)) return { Icon: Table2, color: "text-sky-300" };
+  return { Icon: Package, color: "text-emerald-300" };
+};
+
+function GearIcon({ name, type }: { name: string; type: string }) {
+  if (type === "resource") return <MapPin className="w-5 h-5 text-emerald-400" />;
+  const { Icon, color } = getGearVisual(name);
+  return <Icon className={`w-5 h-5 ${color}`} />;
+}
+
+
+const getPhaseLabel = (booking: any) => {
+  if (booking?.phase === "return_requested") return "RETURN REQUESTED";
+  if (booking?.phase === "ended_not_returned") return "SLOT ENDED";
+  return "IN PROGRESS";
+};
 
 const getBookingDate = (booking: any) => {
-  return (
-    booking.bookingDate ||
-    booking.date ||
-    booking.slotDate ||
-    "Today"
-  );
+  if (!booking?.bookedAt) return "—";
+  return new Date(booking.bookedAt).toLocaleString([], {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 };
 
 
@@ -579,36 +653,22 @@ const getBookingId = (booking: any) => {
 // ================= FETCH LIVE BOOKINGS =================
 
 const fetchLiveBookings = async () => {
+  let status: number | null = null;
   try {
-    console.log("🔄 Fetching live bookings...");
-
-    const res = await fetch("http://localhost:5000/bookings/live", {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-
-    console.log("📡 Live bookings response:", res.status, res.statusText);
-
-    const text = await res.text();
-
-    console.log("📦 Live bookings raw response:", text);
+    const res = await authFetch("http://localhost:5000/bookings/live", { cache: "no-store" });
+    status = res.status;
 
     if (!res.ok) {
-      throw new Error(
-        `Live bookings API failed: ${res.status} ${res.statusText} - ${text}`
-      );
+      setLoadErrors((prev) => ({ ...prev, live: describeLoadError(res.status) }));
+      return;
     }
 
-    const data = JSON.parse(text);
-
-    console.log("✅ Live bookings data:", data);
-
+    const data = await res.json();
     setLiveBookings(Array.isArray(data) ? data : data.bookings || []);
-
+    setLoadErrors((prev) => ({ ...prev, live: undefined }));
   } catch (error) {
-    console.error("❌ Failed to fetch live bookings:", error);
+    console.error("Failed to fetch live bookings:", error);
+    setLoadErrors((prev) => ({ ...prev, live: describeLoadError(status) }));
   }
 };
 
@@ -682,10 +742,43 @@ const liveSports = [
 const [showReturnDetails, setShowReturnDetails] = useState(false);
 const [showIdCard, setShowIdCard] = useState(false);
 const [showFullIdCard, setShowFullIdCard] = useState(false);
+const refreshReturnPanel = async () => {
+  setRefreshingReturns(true);
+  try {
+    const returnsRes = await authFetch("http://localhost:5000/returns/pending");
+    const returns = await returnsRes.json();
+    setReturnRequests(Array.isArray(returns) ? returns.map(toReturnRow) : []);
+  } catch (err) {
+    console.error("Failed to refresh return requests", err);
+  } finally {
+    setRefreshingReturns(false);
+  }
+};
+
+const submitReturnCondition = async (row: any, condition: "good" | "damaged") => {
+  const res = await authFetch(`http://localhost:5000/approve-return/${row.id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ damaged: condition === "damaged" }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.message || `Could not save the return (${res.status}).`) as Error & { status?: number };
+    err.status = res.status;
+    if (res.status === 409) await refreshReturnPanel();
+    throw err;
+  }
+  setReturnRequests((prev) => prev.filter((r) => r.id !== row.id));
+};
+
+const requestSports = Array.from(
+  new Set(returnRequests.map((item) => item.sport).filter(Boolean))
+).sort((a: string, b: string) => a.localeCompare(b));
+
 const filteredReturnRequests = returnRequests.filter((item) => {
-  const matchesDate =
-    selectedRequestDate === "All" ||
-    item.requestDate === selectedRequestDate;
+  const matchesSport =
+    selectedRequestSport === "All" ||
+    item.sport === selectedRequestSport;
 
   const matchesSearch =
     returnSearch.trim() === "" ||
@@ -693,12 +786,12 @@ const filteredReturnRequests = returnRequests.filter((item) => {
       .toLowerCase()
       .includes(returnSearch.toLowerCase());
 
-  return matchesDate && matchesSearch;
+  return matchesSport && matchesSearch;
 });
 const [advanceBookingDays,setAdvanceBookingDays]=useState(7);  
 const fetchSports = async () => {
     try {
-      const response = await fetch(
+      const response = await authFetch(
         "http://localhost:5000/sports"
       );
 
@@ -714,40 +807,47 @@ const fetchSports = async () => {
  
   useEffect(() => {
     fetchSports();
+    authFetch("http://localhost:5000/dashboard/stats")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setDashStats(data))
+      .catch(() => setDashStats(null));
     // fetch announcements, return requests and anonymous requests from backend
     const fetchAnnouncements = async () => {
       try {
-        const res = await fetch("http://localhost:5000/notices");
+        const res = await authFetch("http://localhost:5000/notices");
+        if (!res.ok) {
+          setLoadErrors((prev) => ({ ...prev, notices: describeLoadError(res.status) }));
+          return;
+        }
         const data = await res.json();
         setAnnouncements(Array.isArray(data) ? data : []);
+        setLoadErrors((prev) => ({ ...prev, notices: undefined }));
       } catch (err) {
         console.error("Failed to fetch announcements", err);
+        setLoadErrors((prev) => ({ ...prev, notices: describeLoadError(null) }));
       }
     };
 
     const fetchReturnRequests = async () => {
       try {
-        const res = await fetch("http://localhost:5000/return-requests");
+        const res = await authFetch("http://localhost:5000/returns/pending");
+        if (!res.ok) {
+          setLoadErrors((prev) => ({ ...prev, returns: describeLoadError(res.status) }));
+          return;
+        }
         const data = await res.json();
-        setReturnRequests(Array.isArray(data) ? data : []);
+        setReturnRequests(Array.isArray(data) ? data.map(toReturnRow) : []);
+        setLoadErrors((prev) => ({ ...prev, returns: undefined }));
+        setReturnsReady(true);
       } catch (err) {
         console.error("Failed to fetch return requests", err);
-      }
-    };
-
-    const fetchAnonymousRequests = async () => {
-      try {
-        const res = await fetch("http://localhost:5000/anonymous-requests");
-        const data = await res.json();
-        setRequests(Array.isArray(data) ? data : []);
-      } catch (err) {
-        console.error("Failed to fetch anonymous requests", err);
+        setLoadErrors((prev) => ({ ...prev, returns: describeLoadError(null) }));
+        setReturnsReady(true);
       }
     };
 
     fetchAnnouncements();
     fetchReturnRequests();
-    fetchAnonymousRequests();
   }, []);
 
 const deleteSport = async (id: string) => {
@@ -760,7 +860,7 @@ const deleteSport = async (id: string) => {
 
   try {
 
-    const response = await fetch(
+    const response = await authFetch(
   `http://localhost:5000/sports/${id}`,
   {
     method: "DELETE",
@@ -782,7 +882,7 @@ const updateSport = async(updatedSport:any)=>{
 
 try{
 
-await fetch(
+const response = await authFetch(
 
 `http://localhost:5000/sports/${updatedSport.id}`,
 
@@ -802,9 +902,18 @@ body:JSON.stringify(updatedSport)
 
 );
 
+if (!response.ok) {
+  const data = await response.json().catch(() => null);
+  return { ok: false as const, message: data?.message || "Failed to update sport" };
+}
+
+const saved = await response.json();
+return { ok: true as const, sport: saved };
+
 }catch(err){
 
 console.log(err);
+return { ok: false as const, message: "Could not reach the server" };
 
 }
 
@@ -887,24 +996,26 @@ const handleDeleteSelectedResource = async () => {
   setTimeout(() => setShowResourceToast(false), 2500);
 };
 
-const handleSaveSlotSettings = () => {
+const handleSaveSlotSettings = async () => {
 
 if (!selectedSport) return;
 
-const updatedSport = {
+const result = await updateSport({
+  ...selectedSport,
+  hasSlotSystem: slotEnabled,
+  slotDurationMinutes: slotDuration,
+  slotCapacity: slotCapacityValue,
+});
 
-...selectedSport,
+if (!result || result.ok === false) {
+  setResourceToastMessage(result?.message || "Failed to save slot settings");
+  setShowResourceToast(true);
+  setTimeout(() => setShowResourceToast(false), 2500);
+  return;
+}
 
-hasSlotSystem: slotEnabled,
-
-slotDurationMinutes: slotDuration,
-
-slotCapacity: slotCapacityValue,
-
-};
-
+const updatedSport = result.sport;
 setSelectedSport(updatedSport);
-
 setSports((prev)=>
 
 prev.map((sport)=>
@@ -920,19 +1031,29 @@ sport.id===selectedSport.id
 );
 
 setShowSlotPopup(false);
+setResourceToastMessage("Slot settings saved");
+setShowResourceToast(true);
+setTimeout(() => setShowResourceToast(false), 2500);
 
 };
 
-const handleSaveSportInfo = () => {
+const handleSaveSportInfo = async () => {
   if (!selectedSport) return;
 
-  const updatedSport = {
+  const result = await updateSport({
     ...selectedSport,
     name: editedSportName.trim() || selectedSport.name,
     resourceType: editedResourceType.trim() || selectedSport.resourceType || "Court",
-    active: editedStatus,
-  };
+  });
 
+  if (!result || result.ok === false) {
+    setResourceToastMessage(result?.message || "Failed to update sport");
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 2500);
+    return;
+  }
+
+  const updatedSport = result.sport;
   setSelectedSport(updatedSport);
   setSports((prev) =>
     prev.map((sport) => (sport.id === selectedSport.id ? updatedSport : sport))
@@ -976,17 +1097,76 @@ return "📍";
 };
 const handleCreateReservation = async () => {
 
-  // TODO: Save reservation to Firebase later.
+  if (!selectedSport?.id) return;
 
-  console.log({
-    team: reservationTeamName,
-    purpose: reservationPurpose,
-    startDate: reservationStartDate,
-    endDate: reservationEndDate,
-    startTime: reservationStartTime,
-    duration: reservationDuration,
-    resources: selectedReservationResources,
-  });
+  const team = reservationTeamName.trim();
+  const startDate = reservationStartDate;
+  const endDate = reservationEndDate || reservationStartDate;
+
+  const announce = (message: string) => {
+    setResourceToastMessage(message);
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 3000);
+  };
+
+  if (!team) return announce("Please enter a team name");
+  if (!startDate) return announce("Please choose a start date");
+  if (!reservationStartTime) return announce("Please choose a slot start time");
+  if (!reservationDuration || reservationDuration <= 0) return announce("Duration must be a positive number of minutes");
+  if (selectedReservationResources.length === 0) return announce("Select at least one resource");
+  if (new Date(endDate) < new Date(startDate)) return announce("End date cannot be before the start date");
+
+  // One reservation per calendar day across the chosen date range, same
+  // start time and duration every day (daily recurring team practice).
+  const days: string[] = [];
+  for (
+    let cursor = new Date(startDate);
+    cursor <= new Date(endDate);
+    cursor.setDate(cursor.getDate() + 1)
+  ) {
+    days.push(new Date(cursor).toISOString().slice(0, 10));
+  }
+
+  let created = 0;
+  const failures: string[] = [];
+
+  for (const day of days) {
+    try {
+      const response = await authFetch("http://localhost:5000/team-reservations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          teamName: team,
+          purpose: reservationPurpose,
+          sportId: selectedSport.id,
+          startDateTime: new Date(`${day}T${reservationStartTime}`).toISOString(),
+          durationMinutes: reservationDuration,
+          resourceUnitIds: selectedReservationResources,
+        }),
+      });
+
+      if (response.ok) {
+        created += 1;
+      } else {
+        const data = await response.json().catch(() => null);
+        failures.push(`${day}: ${data?.message || "failed"}`);
+      }
+    } catch (err) {
+      console.error("CREATE TEAM RESERVATION ERROR:", err);
+      failures.push(`${day}: could not reach the server`);
+    }
+  }
+
+  if (created > 0) {
+    announce(
+      failures.length === 0
+        ? `Reserved ${created} day(s) for ${team}`
+        : `Reserved ${created} of ${days.length} day(s); ${failures[0]}`
+    );
+  } else {
+    announce(failures[0] || "Failed to create reservation");
+    return;
+  }
 
   // Close popup
   setShowReservationPopup(false);
@@ -1001,6 +1181,146 @@ const handleCreateReservation = async () => {
   setSelectedReservationResources([]);
 
 };
+
+const refreshSportDetail = async (sportId: number) => {
+  try {
+    const response = await authFetch("http://localhost:5000/sports");
+    const data = await response.json();
+    if (Array.isArray(data)) {
+      setSports(data);
+      const updated = data.find((s: any) => s.id === sportId);
+      if (updated) setSelectedSport(updated);
+    }
+  } catch (err) {
+    console.error("REFRESH SPORT DETAIL ERROR:", err);
+  }
+};
+
+const fetchMaintenanceWindows = async (sportId: number) => {
+  try {
+    const response = await authFetch(`http://localhost:5000/sports/${sportId}/maintenance-windows`);
+    if (!response.ok) {
+      setActiveMaintenanceWindows([]);
+      return;
+    }
+    const data = await response.json();
+    setActiveMaintenanceWindows(Array.isArray(data) ? data : []);
+  } catch (err) {
+    console.error("FETCH MAINTENANCE WINDOWS ERROR:", err);
+    setActiveMaintenanceWindows([]);
+  }
+};
+
+const handleSaveMaintenance = async (force: boolean) => {
+  if (!selectedSport?.id) return;
+
+  const announce = (message: string) => {
+    setResourceToastMessage(message);
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 3000);
+  };
+
+  if (maintenanceScope === "resources" && selectedMaintenanceResources.length === 0) {
+    announce("Select at least one resource");
+    return;
+  }
+
+  if (!maintenanceWindowStart || !maintenanceWindowEnd) {
+    announce("Choose a start and end date/time");
+    return;
+  }
+
+  const startAt = new Date(maintenanceWindowStart);
+  const endAt = new Date(maintenanceWindowEnd);
+
+  if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+    announce("Invalid start or end date/time");
+    return;
+  }
+  if (endAt <= startAt) {
+    announce("End must be after start");
+    return;
+  }
+
+  setMaintenanceSaving(true);
+
+  try {
+    const response = await authFetch(`http://localhost:5000/sports/${selectedSport.id}/maintenance-windows`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scope: maintenanceScope === "entire" ? "entire" : "resource",
+        resourceUnitIds: maintenanceScope === "resources" ? selectedMaintenanceResources : undefined,
+        startAt: startAt.toISOString(),
+        endAt: endAt.toISOString(),
+        message: maintenanceMessage.trim() || null,
+        force,
+      }),
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (response.status === 409 && data?.conflictType === "reservation") {
+      setMaintenanceConflict({ conflicts: data.conflicts || [] });
+      return;
+    }
+
+    if (!response.ok) {
+      announce(data?.message || "Failed to schedule maintenance");
+      return;
+    }
+
+    await refreshSportDetail(selectedSport.id);
+    await fetchMaintenanceWindows(selectedSport.id);
+
+    setMaintenanceConflict(null);
+    setShowMaintenancePopup(false);
+    setSelectedMaintenanceResources([]);
+    setMaintenanceMessage("");
+    setMaintenanceWindowStart("");
+    setMaintenanceWindowEnd("");
+
+    announce(
+      data?.cancelledReservations > 0
+        ? `Maintenance scheduled; ${data.cancelledReservations} reservation(s) cancelled`
+        : "Maintenance scheduled"
+    );
+  } catch (err) {
+    console.error("SAVE MAINTENANCE ERROR:", err);
+    announce("Could not reach the server");
+  } finally {
+    setMaintenanceSaving(false);
+  }
+};
+
+const handleEndMaintenanceWindow = async (windowId: number) => {
+  if (!selectedSport?.id) return;
+
+  try {
+    const response = await authFetch(`http://localhost:5000/sports/${selectedSport.id}/maintenance-windows/${windowId}/end`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      setResourceToastMessage("Failed to end maintenance");
+      setShowResourceToast(true);
+      setTimeout(() => setShowResourceToast(false), 2500);
+      return;
+    }
+
+    await refreshSportDetail(selectedSport.id);
+    await fetchMaintenanceWindows(selectedSport.id);
+    setResourceToastMessage("Maintenance ended");
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 2500);
+  } catch (err) {
+    console.error("END MAINTENANCE WINDOW ERROR:", err);
+    setResourceToastMessage("Could not reach the server");
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 2500);
+  }
+};
+
   return (
     <main className="min-h-screen bg-black text-white">
       <Navbar />
@@ -1036,7 +1356,7 @@ const handleCreateReservation = async () => {
 
         {/* STATS */}
 
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-10">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-10 [&>*:last-child]:col-span-2 md:[&>*:last-child]:col-span-3 xl:[&>*:last-child]:col-span-1">
 
           <div className="bg-zinc-900 rounded-3xl p-6 border border-zinc-800 text-center">
             <p className="text-4xl mb-2">🏅</p>
@@ -1046,20 +1366,24 @@ const handleCreateReservation = async () => {
             <div className="mt-4 flex items-end gap-3">
 
   <div className="mt-4 flex items-center gap-2">
-  <span className="text-emerald-400 font-bold text-4xl">
-    {sports.length}
+  <span className="text-emerald-400 font-bold text-4xl" title="Sports not in maintenance">
+    {dashStats ? dashStats.activeSports : "…"}
   </span>
 
   <span className="text-zinc-500">
     /
   </span>
 
-  <span className="pb-1 text-sm font-semibold text-zinc-500 uppercase text 3xl">
-    Total Sports
+  <span className="text-zinc-300 font-bold text-2xl">
+    {dashStats ? dashStats.sports : sports.length}
   </span>
 
 </div>
 </div>
+
+            <p className="text-zinc-400 text-sm mt-1">
+              Active / Total Sports
+            </p>
 
           </div>
 
@@ -1075,7 +1399,7 @@ const handleCreateReservation = async () => {
               Staff
             </h3>
             <p className="text-violet-400 font-bold text-3xl mt-3">
-              {sports.reduce((sum, sport) => sum + (sport.totalStaff || 0), 0)}
+              {dashStats?.staff ?? "…"}
             </p>
             <p className="text-zinc-400">
               Active
@@ -1094,7 +1418,7 @@ const handleCreateReservation = async () => {
               Students
             </h3>
             <p className="text-3xl text-orange-400 font-bold mt-3">
-              {sports.reduce((sum, sport) => sum + (sport.totalStudents || 0), 0)}
+              {dashStats?.students ?? "…"}
             </p>
             <p className="text-zinc-400">
               Registered
@@ -1107,11 +1431,7 @@ const handleCreateReservation = async () => {
               Assets
             </h3>
             <p className="text-3xl text-blue-400 font-bold mt-3">
-              {sports.reduce(
-  (sum, sport) =>
-    sum + (sport.resourceUnits?.length || 0),
-  0
-)}
+              {dashStats?.resources ?? "…"}
             </p>
             <p className="text-zinc-400 font-bold">
               Resources
@@ -1124,7 +1444,7 @@ const handleCreateReservation = async () => {
               Activity
             </h3>
             <p className="text-3xl text-pink-400 font-bold mt-3">
-              {sports.reduce((sum, sport) => sum + (sport.totalBookings || 0), 0)}
+              {dashStats?.bookings ?? "…"}
             </p>
             <p className="text-zinc-400">
               Bookings
@@ -1135,2058 +1455,30 @@ const handleCreateReservation = async () => {
 
 {/* ================= RETURN REQUESTS MODAL ================= */}
 
-{showReturnRequests && (
-  <div
-    className="
-      fixed inset-0 z-[230]
-      bg-black/80
-      backdrop-blur-2xl
-      flex items-center justify-center
-      p-4 sm:p-6
-    "
-  >
-
-    {/* BACKGROUND AMBIENT LIGHT */}
-
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="absolute inset-0 pointer-events-none overflow-hidden"
-    >
-
-      {/* PINK GLOW */}
-
-      <motion.div
-        animate={{
-          x: [0, 80, 0],
-          y: [0, -40, 0],
-          scale: [1, 1.15, 1],
+<ReturnRequestsModal
+        open={showReturnRequests}
+        rows={returnRequests}
+        loading={!returnsReady && !loadErrors.returns}
+        error={loadErrors.returns ?? ""}
+        refreshing={refreshingReturns}
+        onClose={() => setShowReturnRequests(false)}
+        onRefresh={refreshReturnPanel}
+        onReview={(row) => {
+          setSelectedReturn(row);
+          setShowReturnDetails(true);
         }}
-        transition={{
-          duration: 8,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="
-          absolute
-          top-[5%]
-          left-[5%]
-          w-[460px]
-          h-[460px]
-          rounded-full
-          bg-pink-500/[0.10]
-          blur-[140px]
-        "
       />
-
-      {/* FUCHSIA GLOW */}
-
-      <motion.div
-        animate={{
-          x: [0, -70, 0],
-          y: [0, 50, 0],
-          scale: [1, 1.1, 1],
-        }}
-        transition={{
-          duration: 9,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="
-          absolute
-          bottom-[0%]
-          right-[5%]
-          w-[430px]
-          h-[430px]
-          rounded-full
-          bg-fuchsia-500/[0.08]
-          blur-[140px]
-        "
-      />
-
-      {/* SMALL ROSE ACCENT */}
-
-      <motion.div
-        animate={{
-          scale: [1, 1.25, 1],
-          opacity: [0.2, 0.4, 0.2],
-        }}
-        transition={{
-          duration: 6,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="
-          absolute
-          top-[45%]
-          left-[45%]
-          w-[250px]
-          h-[250px]
-          rounded-full
-          bg-rose-500/[0.05]
-          blur-[120px]
-        "
-      />
-
-    </motion.div>
-
-
-    {/* MAIN MODAL */}
-
-    <motion.div
-      initial={{
-        opacity: 0,
-        scale: 0.9,
-        y: 45,
-        rotateX: 6,
-      }}
-      animate={{
-        opacity: 1,
-        scale: 1,
-        y: 0,
-        rotateX: 0,
-      }}
-      transition={{
-        duration: 0.55,
-        ease: [0.16, 1, 0.3, 1],
-      }}
-      className="
-        relative
-        w-full
-        max-w-[1180px]
-        max-h-[92vh]
-
-        overflow-hidden
-
-        rounded-[30px]
-        sm:rounded-[38px]
-
-        bg-gradient-to-br
-        from-[#12090f]
-        via-[#080808]
-        to-[#0d080b]
-
-        border
-        border-pink-500/25
-
-        shadow-[0_0_140px_rgba(236,72,153,.16)]
-      "
-    >
-
-      {/* MOVING BORDER GLOW */}
-
-      <motion.div
-        animate={{
-          opacity: [0.15, 0.45, 0.15],
-        }}
-        transition={{
-          duration: 3,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="
-          absolute
-          inset-0
-          rounded-[30px]
-          sm:rounded-[38px]
-
-          border
-          border-pink-400/30
-
-          pointer-events-none
-        "
-      />
-
-
-      {/* TOP SCANNING LIGHT */}
-
-      <motion.div
-        animate={{
-          x: ["-120%", "220%"],
-        }}
-        transition={{
-          duration: 4.5,
-          repeat: Infinity,
-          ease: "linear",
-        }}
-        className="
-          absolute
-          top-0
-          left-0
-          w-[45%]
-          h-[2px]
-
-          bg-gradient-to-r
-          from-transparent
-          via-pink-400
-          to-transparent
-
-          blur-[2px]
-
-          pointer-events-none
-        "
-      />
-
-
-      {/* CLOSE BUTTON */}
-
-      <motion.button
-        type="button"
-        whileHover={{
-          rotate: 90,
-          scale: 1.08,
-        }}
-        whileTap={{
-          scale: 0.9,
-        }}
-        onClick={() => setShowReturnRequests(false)}
-        className="
-          absolute
-          top-5
-          right-5
-          z-50
-
-          w-12
-          h-12
-
-          rounded-2xl
-
-          bg-zinc-900/90
-          border
-          border-zinc-800
-
-          text-zinc-500
-
-          flex
-          items-center
-          justify-center
-
-          hover:text-pink-300
-          hover:bg-pink-500/10
-          hover:border-pink-500/30
-
-          transition-all
-          duration-300
-        "
-      >
-        <X className="w-5 h-5" />
-      </motion.button>
-
-
-      {/* HEADER */}
-
-      <div
-        className="
-          relative
-          z-10
-
-          px-6
-          sm:px-10
-          lg:px-12
-
-          pt-8
-          sm:pt-10
-
-          pb-7
-
-          border-b
-          border-pink-500/10
-        "
-      >
-
-        <div className="flex items-center gap-4 sm:gap-5">
-
-          {/* ICON */}
-
-          <motion.div
-            animate={{
-              y: [0, -3, 0],
-              rotate: [0, -2, 2, 0],
-            }}
-            transition={{
-              duration: 3.5,
-              repeat: Infinity,
-              ease: "easeInOut",
-            }}
-            className="
-              relative
-              w-16
-              h-16
-              sm:w-[68px]
-              sm:h-[68px]
-              shrink-0
-
-              rounded-[22px]
-
-              bg-gradient-to-br
-              from-pink-500/20
-              to-fuchsia-500/10
-
-              border
-              border-pink-400/30
-
-              flex
-              items-center
-              justify-center
-
-              shadow-[0_0_40px_rgba(236,72,153,.18)]
-            "
-          >
-
-            <ClipboardCheck
-              className="
-                w-8
-                h-8
-
-                text-pink-400
-
-                drop-shadow-[0_0_12px_rgba(244,114,182,.8)]
-              "
-            />
-
-            <motion.span
-              animate={{
-                opacity: [0.1, 0.5, 0.1],
-                scale: [1, 1.15, 1],
-              }}
-              transition={{
-                duration: 2.5,
-                repeat: Infinity,
-              }}
-              className="
-                absolute
-                inset-0
-                rounded-[22px]
-
-                border
-                border-pink-400/30
-              "
-            />
-
-          </motion.div>
-
-
-          <div>
-
-            <h2
-              className="
-                text-3xl
-                sm:text-4xl
-
-                font-black
-
-                bg-gradient-to-r
-                from-white
-                via-pink-100
-                to-pink-400
-
-                bg-clip-text
-                text-transparent
-              "
-            >
-              Return Requests
-            </h2>
-
-            <p className="text-zinc-500 text-sm sm:text-base mt-1">
-              Review and process equipment returns
-            </p>
-
-          </div>
-
-        </div>
-
-
-        {/* SEARCH AREA */}
-
-        <div className="mt-8 flex flex-col sm:flex-row gap-3">
-
-          {/* SEARCH */}
-
-          <div className="relative flex-1 group">
-
-            <Search
-              className="
-                absolute
-                left-5
-                top-1/2
-                -translate-y-1/2
-
-                w-5
-                h-5
-
-                text-zinc-600
-
-                group-focus-within:text-pink-400
-
-                transition-colors
-              "
-            />
-
-            <input
-              value={returnSearch}
-              onChange={(e) => setReturnSearch(e.target.value)}
-              placeholder="Search student or equipment..."
-              className="
-                w-full
-                h-15
-                sm:h-16
-
-                rounded-2xl
-
-                bg-black/30
-
-                border
-                border-zinc-800
-
-                pl-14
-                pr-5
-
-                text-white
-
-                outline-none
-
-                placeholder:text-zinc-600
-
-                focus:border-pink-500/50
-                focus:bg-pink-500/[0.025]
-
-                focus:ring-4
-                focus:ring-pink-500/[0.06]
-
-                transition-all
-                duration-300
-              "
-            />
-
-          </div>
-
-
-          {/* DATE FILTER */}
-
-          <select
-            value={selectedRequestDate}
-            onChange={(e) =>
-              setSelectedRequestDate(e.target.value)
-            }
-            className="
-              h-15
-              sm:h-16
-
-              w-full
-              sm:w-[175px]
-
-              rounded-2xl
-
-              bg-black/30
-
-              border
-              border-zinc-800
-
-              px-5
-
-              text-zinc-300
-
-              outline-none
-
-              hover:border-pink-500/30
-
-              focus:border-pink-500/50
-              focus:ring-4
-              focus:ring-pink-500/[0.05]
-
-              transition-all
-              duration-300
-
-              cursor-pointer
-            "
-          >
-            <option>Today</option>
-            <option>Yesterday</option>
-            <option>All</option>
-          </select>
-
-        </div>
-
-      </div>
-
-
-      {/* REQUEST LIST */}
-
-      <div
-        className="
-          relative
-          z-10
-
-          p-5
-          sm:p-8
-          lg:p-9
-
-          max-h-[62vh]
-
-          overflow-y-auto
-
-          space-y-4
-
-          scrollbar-thin
-          scrollbar-thumb-pink-500/30
-          scrollbar-track-transparent
-        "
-      >
-
-        {filteredReturnRequests.length === 0 ? (
-
-          <motion.div
-            initial={{
-              opacity: 0,
-              scale: 0.9,
-            }}
-            animate={{
-              opacity: 1,
-              scale: 1,
-            }}
-            className="py-20 text-center"
-          >
-
-            <motion.div
-              animate={{
-                y: [0, -7, 0],
-                rotate: [0, 2, -2, 0],
-              }}
-              transition={{
-                duration: 3,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-              className="
-                mx-auto
-                mb-6
-
-                w-24
-                h-24
-
-                rounded-[28px]
-
-                bg-pink-500/[0.06]
-
-                border
-                border-pink-500/15
-
-                flex
-                items-center
-                justify-center
-
-                shadow-[0_0_45px_rgba(236,72,153,.08)]
-              "
-            >
-              <PackageOpen
-                className="
-                  w-10
-                  h-10
-                  text-pink-400/60
-                "
-              />
-            </motion.div>
-
-            <p className="text-xl font-black text-zinc-300">
-              No Return Requests
-            </p>
-
-            <p className="text-sm text-zinc-600 mt-2">
-              Nothing is waiting for review.
-            </p>
-
-          </motion.div>
-
-        ) : (
-
-          filteredReturnRequests.map((item, index) => (
-
-            <motion.button
-              key={item.id}
-              type="button"
-
-              initial={{
-                opacity: 0,
-                x: -20,
-              }}
-
-              animate={{
-                opacity: 1,
-                x: 0,
-              }}
-
-              transition={{
-                delay: index * 0.06,
-                duration: 0.4,
-                ease: [0.16, 1, 0.3, 1],
-              }}
-
-              whileHover={{
-                scale: 1.012,
-                x: 4,
-              }}
-
-              whileTap={{
-                scale: 0.985,
-              }}
-
-              onClick={() => {
-                setSelectedReturn(item);
-                setShowReturnDetails(true);
-              }}
-
-              className="
-                relative
-                w-full
-                group
-                text-left
-                overflow-hidden
-
-                rounded-[26px]
-
-                bg-gradient-to-r
-                from-[#160b11]/90
-                via-zinc-900/70
-                to-[#10090d]/90
-
-                border
-                border-zinc-800
-
-                p-5
-                sm:p-6
-                lg:p-7
-
-                hover:border-pink-500/40
-
-                hover:shadow-[0_20px_70px_rgba(236,72,153,.11)]
-
-                transition-all
-                duration-300
-              "
-            >
-
-              {/* PINK HOVER AURA */}
-
-              <div
-                className="
-                  absolute
-                  inset-0
-
-                  opacity-0
-                  group-hover:opacity-100
-
-                  bg-gradient-to-r
-                  from-pink-500/[0.09]
-                  via-fuchsia-500/[0.025]
-                  to-rose-500/[0.06]
-
-                  transition-opacity
-                  duration-500
-
-                  pointer-events-none
-                "
-              />
-
-
-              {/* SHINE */}
-
-              <motion.div
-                initial={{
-                  x: "-120%",
-                }}
-                whileHover={{
-                  x: "120%",
-                }}
-                transition={{
-                  duration: 0.8,
-                  ease: "easeInOut",
-                }}
-                className="
-                  absolute
-                  top-0
-                  bottom-0
-
-                  w-1/3
-
-                  bg-gradient-to-r
-                  from-transparent
-                  via-white/[0.05]
-                  to-transparent
-
-                  skew-x-[-20deg]
-
-                  pointer-events-none
-                "
-              />
-
-
-              <div
-                className="
-                  relative
-                  z-10
-
-                  flex
-                  flex-col
-                  sm:flex-row
-
-                  sm:items-center
-                  sm:justify-between
-
-                  gap-5
-                "
-              >
-
-                {/* LEFT */}
-
-                <div className="flex items-center gap-4">
-
-                  <motion.div
-                    whileHover={{
-                      rotate: 8,
-                      scale: 1.1,
-                    }}
-                    className="
-                      w-16
-                      h-16
-                      shrink-0
-
-                      rounded-[20px]
-
-                      bg-pink-500/[0.08]
-
-                      border
-                      border-pink-500/20
-
-                      flex
-                      items-center
-                      justify-center
-
-                      group-hover:bg-pink-500/[0.14]
-
-                      group-hover:shadow-[0_0_35px_rgba(236,72,153,.18)]
-
-                      transition-all
-                      duration-300
-                    "
-                  >
-
-                    <Package
-                      className="
-                        w-7
-                        h-7
-
-                        text-pink-400
-
-                        drop-shadow-[0_0_9px_rgba(244,114,182,.6)]
-                      "
-                    />
-
-                  </motion.div>
-
-
-                  <div>
-
-                    <h3 className="
-                      text-xl
-                      sm:text-lg
-                      font-black
-                      text-white
-                    ">
-                      {item.student}
-                    </h3>
-
-                    <p className="
-                      text-sm
-                      text-zinc-500
-                      mt-1
-                    ">
-                      {item.resourceType === "Gear"
-                        ? item.gear
-                        : item.court}
-                    </p>
-
-                  </div>
-
-                </div>
-
-
-                {/* RIGHT */}
-
-                <div className="
-                  flex
-                  items-center
-                  justify-between
-                  sm:justify-end
-                  gap-5
-                ">
-
-                  <div className="text-right">
-
-                    <div className="
-                      flex
-                      items-center
-                      justify-end
-                      gap-2
-                    ">
-
-                      {/* Pending stays amber */}
-
-                      <motion.span
-                        animate={{
-                          scale: [1, 1.35, 1],
-                          opacity: [0.5, 1, 0.5],
-                        }}
-                        transition={{
-                          duration: 2,
-                          repeat: Infinity,
-                        }}
-                        className="
-                          w-2
-                          h-2
-                          rounded-full
-                          bg-amber-400
-                          shadow-[0_0_10px_rgba(251,191,36,.7)]
-                        "
-                      />
-
-                      <span className="
-                        text-amber-400
-                        text-[11px]
-                        font-black
-                        tracking-[0.15em]
-                      ">
-                        PENDING
-                      </span>
-
-                    </div>
-
-                    <p className="
-                      text-xs
-                      text-zinc-600
-                      mt-2
-                    ">
-                      {item.borrowTime}
-                    </p>
-
-                  </div>
-
-
-                  <motion.div
-                    animate={{
-                      x: [0, 4, 0],
-                    }}
-                    transition={{
-                      duration: 1.5,
-                      repeat: Infinity,
-                      ease: "easeInOut",
-                    }}
-                    className="
-                      w-10
-                      h-10
-
-                      rounded-xl
-
-                      bg-zinc-800/60
-
-                      border
-                      border-zinc-800
-
-                      flex
-                      items-center
-                      justify-center
-
-                      text-pink-400
-
-                      group-hover:bg-pink-500/10
-                      group-hover:border-pink-500/25
-
-                      transition-all
-                    "
-                  >
-                    <ChevronRight className="w-5 h-5" />
-                  </motion.div>
-
-                </div>
-
-              </div>
-
-
-              {/* BOTTOM */}
-
-              <div
-                className="
-                  relative
-                  z-10
-
-                  mt-5
-                  pt-4
-
-                  border-t
-                  border-zinc-800/70
-
-                  flex
-                  items-center
-                  justify-between
-                "
-              >
-
-                <span className="
-                  text-[11px]
-                  uppercase
-                  tracking-wider
-                  text-zinc-600
-                ">
-                  Return request submitted
-                </span>
-
-                <span className="
-                  text-[11px]
-                  font-black
-                  uppercase
-                  tracking-wider
-
-                  text-pink-400
-
-                  opacity-60
-                  group-hover:opacity-100
-
-                  transition-opacity
-                ">
-                  Review →
-                </span>
-
-              </div>
-
-            </motion.button>
-
-          ))
-
-        )}
-
-      </div>
-
-    </motion.div>
-
-  </div>
-)}
 
 {/* ================= RETURN DETAILS ================= */}
 
-{showReturnDetails && selectedReturn && (
-
-  <div
-    className="
-      fixed
-      inset-0
-      z-[250]
-
-      bg-black/85
-      backdrop-blur-2xl
-
-      flex
-      items-center
-      justify-center
-
-      p-4
-      sm:p-6
-    "
-  >
-
-    {/* BACKGROUND GLOW */}
-
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="absolute inset-0 pointer-events-none overflow-hidden"
-    >
-
-      <motion.div
-        animate={{
-          scale: [1, 1.2, 1],
-          opacity: [0.5, 0.8, 0.5],
-        }}
-        transition={{
-          duration: 7,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="
-          absolute
-          top-[5%]
-          right-[8%]
-
-          w-[440px]
-          h-[440px]
-
-          rounded-full
-
-          bg-pink-500/[0.09]
-
-          blur-[130px]
-        "
-      />
-
-      <motion.div
-        animate={{
-          scale: [1.1, 1, 1.1],
-        }}
-        transition={{
-          duration: 8,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="
-          absolute
-          bottom-[5%]
-          left-[5%]
-
-          w-[400px]
-          h-[400px]
-
-          rounded-full
-
-          bg-fuchsia-500/[0.07]
-
-          blur-[130px]
-        "
-      />
-
-    </motion.div>
-
-
-    {/* MODAL */}
-
-    <motion.div
-      initial={{
-        opacity: 0,
-        scale: 0.9,
-        y: 45,
-        rotateX: 6,
-      }}
-
-      animate={{
-        opacity: 1,
-        scale: 1,
-        y: 0,
-        rotateX: 0,
-      }}
-
-      transition={{
-        duration: 0.5,
-        ease: [0.16, 1, 0.3, 1],
-      }}
-
-      className="
-        relative
-
-        w-full
-        max-w-[1000px]
-        max-h-[92vh]
-
-        overflow-y-auto
-
-        rounded-[30px]
-        sm:rounded-[38px]
-
-        bg-gradient-to-br
-        from-[#14090f]
-        via-[#080808]
-        to-[#0d080b]
-
-        border
-        border-pink-500/25
-
-        shadow-[0_0_140px_rgba(236,72,153,.16)]
-
-        scrollbar-thin
-        scrollbar-thumb-pink-500/30
-      "
-    >
-
-      {/* TOP BORDER LIGHT */}
-
-      <motion.div
-        animate={{
-          opacity: [0.2, 0.55, 0.2],
-        }}
-        transition={{
-          duration: 3,
-          repeat: Infinity,
-        }}
-        className="
-          absolute
-          top-0
-          left-10
-          right-10
-          h-px
-
-          bg-gradient-to-r
-          from-transparent
-          via-pink-400
-          to-transparent
-        "
-      />
-
-
-      {/* CLOSE */}
-
-      <motion.button
-        type="button"
-        whileHover={{
-          rotate: 90,
-          scale: 1.08,
-        }}
-        whileTap={{
-          scale: 0.9,
-        }}
-        onClick={() => {
+<ReturnDetailsModal
+        row={showReturnDetails ? selectedReturn : null}
+        onClose={() => {
           setShowReturnDetails(false);
           setSelectedReturn(null);
         }}
-        className="
-          absolute
-          top-5
-          right-5
-          z-30
-
-          w-12
-          h-12
-
-          rounded-2xl
-
-          bg-zinc-900/90
-
-          border
-          border-zinc-800
-
-          text-zinc-500
-
-          flex
-          items-center
-          justify-center
-
-          hover:text-pink-300
-          hover:bg-pink-500/10
-          hover:border-pink-500/30
-
-          transition-all
-          duration-300
-        "
-      >
-        <X className="w-5 h-5" />
-      </motion.button>
-
-
-      <div className="relative z-10 p-6 sm:p-10 lg:p-12">
-
-        {/* HEADER */}
-
-        <motion.div
-          initial={{
-            opacity: 0,
-            y: -15,
-          }}
-          animate={{
-            opacity: 1,
-            y: 0,
-          }}
-          transition={{
-            delay: 0.05,
-          }}
-          className="mb-9"
-        >
-
-          <div className="flex items-center gap-4 sm:gap-5">
-
-            <motion.div
-              animate={{
-                y: [0, -3, 0],
-                rotate: [0, -2, 2, 0],
-              }}
-              transition={{
-                duration: 3,
-                repeat: Infinity,
-              }}
-              className="
-                relative
-
-                w-16
-                h-16
-                sm:w-[68px]
-                sm:h-[68px]
-
-                rounded-[22px]
-
-                bg-gradient-to-br
-                from-pink-500/20
-                to-fuchsia-500/10
-
-                border
-                border-pink-500/25
-
-                flex
-                items-center
-                justify-center
-
-                shadow-[0_0_40px_rgba(236,72,153,.16)]
-              "
-            >
-
-              <ClipboardCheck
-                className="
-                  w-8
-                  h-8
-
-                  text-pink-400
-
-                  drop-shadow-[0_0_12px_rgba(244,114,182,.7)]
-                "
-              />
-
-              <motion.span
-                animate={{
-                  opacity: [0.1, 0.45, 0.1],
-                  scale: [1, 1.12, 1],
-                }}
-                transition={{
-                  duration: 2.5,
-                  repeat: Infinity,
-                }}
-                className="
-                  absolute
-                  inset-0
-                  rounded-[22px]
-                  border
-                  border-pink-400/25
-                "
-              />
-
-            </motion.div>
-
-
-            <div>
-
-              <h2 className="
-                text-3xl
-                sm:text-4xl
-                font-black
-
-                bg-gradient-to-r
-                from-white
-                via-pink-100
-                to-pink-400
-
-                bg-clip-text
-                text-transparent
-              ">
-                Return Details
-              </h2>
-
-              <p className="
-                text-zinc-500
-                text-sm
-                sm:text-base
-                mt-1
-              ">
-                Verify the equipment before completing the return
-              </p>
-
-            </div>
-
-          </div>
-
-        </motion.div>
-
-
-        {/* INFORMATION GRID */}
-
-        <div className="
-          grid
-          grid-cols-1
-          sm:grid-cols-2
-          gap-4
-        ">
-
-          {/* STUDENT */}
-
-          <motion.div
-            initial={{
-              opacity: 0,
-              x: -20,
-            }}
-            animate={{
-              opacity: 1,
-              x: 0,
-            }}
-            transition={{
-              delay: 0.08,
-            }}
-            className="
-              group
-
-              rounded-[26px]
-
-              bg-pink-500/[0.025]
-
-              border
-              border-zinc-800
-
-              p-6
-              sm:p-7
-
-              hover:border-pink-500/30
-              hover:bg-pink-500/[0.045]
-
-              transition-all
-              duration-300
-            "
-          >
-
-            <p className="
-              text-[10px]
-              uppercase
-              tracking-[0.2em]
-              text-zinc-600
-              font-black
-            ">
-              Student
-            </p>
-
-            <h3 className="
-              text-2xl
-              sm:text-[26px]
-              font-black
-              text-white
-              mt-2
-            ">
-              {selectedReturn.student}
-            </h3>
-
-            <span className="
-              inline-flex
-              mt-3
-
-              px-3
-              py-1
-
-              rounded-full
-
-              bg-pink-500/10
-
-              border
-              border-pink-500/20
-
-              text-pink-400
-
-              text-[10px]
-              font-black
-              tracking-wider
-            ">
-              ACTIVE
-            </span>
-
-          </motion.div>
-
-
-          {/* BORROWED ITEM */}
-
-          <motion.div
-            initial={{
-              opacity: 0,
-              x: 20,
-            }}
-            animate={{
-              opacity: 1,
-              x: 0,
-            }}
-            transition={{
-              delay: 0.12,
-            }}
-            className="
-              group
-
-              rounded-[26px]
-
-              bg-fuchsia-500/[0.025]
-
-              border
-              border-zinc-800
-
-              p-6
-              sm:p-7
-
-              hover:border-fuchsia-500/30
-
-              transition-all
-              duration-300
-            "
-          >
-
-            <p className="
-              text-[10px]
-              uppercase
-              tracking-[0.2em]
-              text-zinc-600
-              font-black
-            ">
-              Borrowed Equipment
-            </p>
-
-            <h3 className="
-              text-2xl
-              sm:text-[26px]
-              font-black
-              text-white
-              mt-2
-            ">
-              {selectedReturn.resourceType === "Gear"
-                ? selectedReturn.gear
-                : selectedReturn.court}
-            </h3>
-
-            <p className="
-              text-zinc-500
-              text-sm
-              mt-2
-            ">
-              {selectedReturn.resourceType}
-            </p>
-
-          </motion.div>
-
-
-          {/* BORROW TIME */}
-
-          <motion.div
-            initial={{
-              opacity: 0,
-              y: 20,
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              delay: 0.16,
-            }}
-            className="
-              rounded-[26px]
-
-              bg-zinc-900/60
-
-              border
-              border-zinc-800
-
-              p-6
-              sm:p-7
-
-              hover:border-pink-500/20
-
-              transition-all
-            "
-          >
-
-            <p className="
-              text-[10px]
-              uppercase
-              tracking-[0.2em]
-              text-zinc-600
-              font-black
-            ">
-              Borrowed At
-            </p>
-
-            <p className="
-              text-lg
-              sm:text-xl
-              font-bold
-              text-white
-              mt-3
-            ">
-              {selectedReturn.borrowTime}
-            </p>
-
-          </motion.div>
-
-
-          {/* REQUEST TIME */}
-
-          <motion.div
-            initial={{
-              opacity: 0,
-              y: 20,
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              delay: 0.2,
-            }}
-            className="
-              rounded-[26px]
-
-              bg-zinc-900/60
-
-              border
-              border-zinc-800
-
-              p-6
-              sm:p-7
-
-              hover:border-pink-500/20
-
-              transition-all
-            "
-          >
-
-            <p className="
-              text-[10px]
-              uppercase
-              tracking-[0.2em]
-              text-zinc-600
-              font-black
-            ">
-              Return Requested
-            </p>
-
-            <p className="
-              text-lg
-              sm:text-xl
-              font-bold
-              text-white
-              mt-3
-            ">
-              {selectedReturn.requestTime}
-            </p>
-
-          </motion.div>
-
-        </div>
-
-
-        {/* IDENTITY VERIFICATION */}
-
-        <motion.div
-          initial={{
-            opacity: 0,
-            y: 25,
-          }}
-          animate={{
-            opacity: 1,
-            y: 0,
-          }}
-          transition={{
-            delay: 0.25,
-          }}
-          className="mt-9"
-        >
-
-          <div className="
-            flex
-            items-end
-            justify-between
-            mb-4
-          ">
-
-            <div>
-
-              <h3 className="
-                text-xl
-                sm:text-2xl
-                font-black
-                text-white
-              ">
-                Identity Verification
-              </h3>
-
-              <p className="
-                text-zinc-600
-                text-sm
-                mt-1
-              ">
-                Verify the student's uploaded identification
-              </p>
-
-            </div>
-
-          </div>
-
-
-          {/* ID PREVIEW */}
-
-          <div
-            className="
-              relative
-
-              h-[300px]
-              sm:h-[340px]
-
-              rounded-[28px]
-
-              overflow-hidden
-
-              bg-gradient-to-br
-              from-[#130a0f]
-              to-black
-
-              border
-              border-pink-500/15
-
-              flex
-              items-center
-              justify-center
-
-              group
-
-              shadow-[inset_0_0_60px_rgba(236,72,153,.025)]
-            "
-          >
-
-            {/* GRID */}
-
-            <div
-              className="
-                absolute
-                inset-0
-
-                opacity-[0.04]
-
-                bg-[linear-gradient(rgba(255,255,255,.3)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.3)_1px,transparent_1px)]
-                bg-[size:30px_30px]
-
-                pointer-events-none
-              "
-            />
-
-            {selectedReturn.idCard ? (
-
-              <img
-                src={selectedReturn.idCard}
-                alt="Uploaded ID card"
-                className="
-                  relative
-                  z-10
-
-                  max-h-[255px]
-                  sm:max-h-[285px]
-
-                  max-w-[90%]
-
-                  object-contain
-
-                  rounded-xl
-
-                  cursor-zoom-in
-
-                  shadow-[0_20px_60px_rgba(0,0,0,.6)]
-
-                  transition-all
-                  duration-500
-
-                  group-hover:scale-[1.03]
-                "
-              />
-
-            ) : (
-
-              <div className="
-                text-center
-                relative
-                z-10
-              ">
-
-                <div className="
-                  text-5xl
-                  mb-3
-                ">
-                  🪪
-                </div>
-
-                <p className="text-zinc-600">
-                  No ID card uploaded
-                </p>
-
-              </div>
-
-            )}
-
-          </div>
-
-
-          {/* VIEW FULL ID */}
-
-          <motion.button
-            type="button"
-            whileHover={{
-              scale: 1.01,
-            }}
-            whileTap={{
-              scale: 0.98,
-            }}
-            onClick={() => setShowIdCard(true)}
-            className="
-              group
-
-              relative
-              overflow-hidden
-
-              mt-4
-
-              w-full
-              h-16
-
-              rounded-2xl
-
-              bg-pink-500/[0.035]
-
-              border
-              border-pink-500/15
-
-              text-white
-              font-bold
-
-              hover:border-pink-500/40
-              hover:bg-pink-500/[0.07]
-
-              transition-all
-              duration-300
-            "
-          >
-
-            <div
-              className="
-                absolute
-                inset-0
-                -translate-x-full
-
-                group-hover:translate-x-full
-
-                transition-transform
-                duration-700
-
-                bg-gradient-to-r
-                from-transparent
-                via-pink-300/[0.08]
-                to-transparent
-              "
-            />
-
-            <span className="
-              relative
-              z-10
-
-              flex
-              items-center
-              justify-center
-              gap-2
-            ">
-              🔍 View Full Size ID
-
-              <ChevronRight
-                className="
-                  w-4
-                  h-4
-
-                  text-pink-400
-
-                  group-hover:translate-x-1
-
-                  transition-transform
-                "
-              />
-            </span>
-
-          </motion.button>
-
-        </motion.div>
-
-
-        {/* CONDITION */}
-
-        <motion.div
-          initial={{
-            opacity: 0,
-            y: 25,
-          }}
-          animate={{
-            opacity: 1,
-            y: 0,
-          }}
-          transition={{
-            delay: 0.3,
-          }}
-          className="mt-9"
-        >
-
-          <div className="mb-4">
-
-            <h3 className="
-              text-xl
-              sm:text-2xl
-              font-black
-              text-white
-            ">
-              Return Condition
-            </h3>
-
-            <p className="
-              text-zinc-600
-              text-sm
-              mt-1
-            ">
-              Select the condition of the returned equipment
-            </p>
-
-          </div>
-
-
-          <div className="
-            grid
-            grid-cols-1
-            sm:grid-cols-2
-            gap-4
-          ">
-
-            {/* GOOD */}
-
-            <motion.button
-              type="button"
-
-              whileHover={{
-                scale: 1.025,
-                y: -3,
-              }}
-
-              whileTap={{
-                scale: 0.97,
-              }}
-
-              onClick={async () => {
-
-                if (!selectedReturn) return;
-
-                try {
-
-                  const res = await fetch(
-                    `http://localhost:5000/return-requests/${selectedReturn.id}`,
-                    {
-                      method: "PUT",
-                      headers: {
-                        "Content-Type": "application/json",
-                      },
-                      body: JSON.stringify({
-                        status: "Approved",
-                      }),
-                    }
-                  );
-
-                  const updated = await res.json();
-
-                  setReturnRequests((prev) =>
-                    prev.map((r) =>
-                      r.id === updated.id ? updated : r
-                    )
-                  );
-
-                } catch (error) {
-
-                  console.error(
-                    "Failed to approve return:",
-                    error
-                  );
-
-                }
-
-                setShowReturnDetails(false);
-                setSelectedReturn(null);
-
-              }}
-
-              className="
-                group
-                relative
-                overflow-hidden
-
-                h-16
-                sm:h-[68px]
-
-                rounded-2xl
-
-                bg-gradient-to-r
-                from-pink-500
-                via-pink-500
-                to-rose-400
-
-                text-white
-
-                font-black
-                text-base
-
-                shadow-[0_10px_35px_rgba(236,72,153,.15)]
-
-                hover:shadow-[0_15px_50px_rgba(236,72,153,.30)]
-
-                transition-all
-              "
-            >
-
-              <div
-                className="
-                  absolute
-                  inset-0
-                  -translate-x-full
-                  group-hover:translate-x-full
-
-                  transition-transform
-                  duration-700
-
-                  bg-gradient-to-r
-                  from-transparent
-                  via-white/30
-                  to-transparent
-                "
-              />
-
-              <span className="
-                relative
-                z-10
-                flex
-                items-center
-                justify-center
-                gap-2
-              ">
-                <span className="text-lg">✓</span>
-                Good Condition
-              </span>
-
-            </motion.button>
-
-
-            {/* BROKEN */}
-
-            <motion.button
-              type="button"
-
-              whileHover={{
-                scale: 1.025,
-                y: -3,
-              }}
-
-              whileTap={{
-                scale: 0.97,
-              }}
-
-              onClick={async () => {
-
-                if (!selectedReturn) return;
-
-                try {
-
-                  const res = await fetch(
-                    `http://localhost:5000/return-requests/${selectedReturn.id}`,
-                    {
-                      method: "PUT",
-                      headers: {
-                        "Content-Type": "application/json",
-                      },
-                      body: JSON.stringify({
-                        status: "Broken",
-                      }),
-                    }
-                  );
-
-                  const updated = await res.json();
-
-                  setReturnRequests((prev) =>
-                    prev.map((r) =>
-                      r.id === updated.id ? updated : r
-                    )
-                  );
-
-                } catch (error) {
-
-                  console.error(
-                    "Failed to update return:",
-                    error
-                  );
-
-                }
-
-                setShowReturnDetails(false);
-                setSelectedReturn(null);
-
-              }}
-
-              className="
-                group
-                relative
-                overflow-hidden
-
-                h-16
-                sm:h-[68px]
-
-                rounded-2xl
-
-                bg-gradient-to-r
-                from-red-500
-                to-rose-500
-
-                text-white
-
-                font-black
-                text-base
-
-                shadow-[0_10px_35px_rgba(239,68,68,.10)]
-
-                hover:shadow-[0_15px_45px_rgba(239,68,68,.25)]
-
-                transition-all
-              "
-            >
-
-              <div
-                className="
-                  absolute
-                  inset-0
-                  -translate-x-full
-                  group-hover:translate-x-full
-
-                  transition-transform
-                  duration-700
-
-                  bg-gradient-to-r
-                  from-transparent
-                  via-white/20
-                  to-transparent
-                "
-              />
-
-              <span className="
-                relative
-                z-10
-
-                flex
-                items-center
-                justify-center
-                gap-2
-              ">
-                <span className="text-lg">×</span>
-                Broken / Damaged
-              </span>
-
-            </motion.button>
-
-          </div>
-
-        </motion.div>
-
-      </div>
-
-    </motion.div>
-
-  </div>
-)}
+        onCondition={submitReturnCondition}
+      />
 
 {/* ================= FULL SIZE ID CARD ================= */}
 
@@ -4078,7 +2370,7 @@ const handleCreateReservation = async () => {
                 text-zinc-300
               "
             >
-              No Live Bookings
+              {loadErrors.live ? "Couldn't load live bookings" : "No Live Bookings"}
             </p>
 
             <p
@@ -4090,7 +2382,7 @@ const handleCreateReservation = async () => {
                 text-zinc-600
               "
             >
-              There are currently no active bookings.
+              {loadErrors.live ?? "There are currently no active bookings."}
             </p>
 
           </motion.div>
@@ -4396,7 +2688,7 @@ const handleCreateReservation = async () => {
                             tracking-wider
                           "
                         >
-                          IN PROGRESS
+                          {getPhaseLabel(booking)}
                         </span>
 
                       </div>
@@ -5000,7 +3292,7 @@ const handleCreateReservation = async () => {
                     text-emerald-400
                   "
                 >
-                  IN PROGRESS
+                  {getPhaseLabel(selectedLiveBooking)}
                 </span>
 
               </div>
@@ -5131,29 +3423,7 @@ const handleCreateReservation = async () => {
                     "
                   >
 
-                    {item.type === "resource" ? (
-
-                      <MapPin
-                        className="
-                          w-5
-                          h-5
-
-                          text-emerald-400
-                        "
-                      />
-
-                    ) : (
-
-                      <Package
-                        className="
-                          w-5
-                          h-5
-
-                          text-emerald-400
-                        "
-                      />
-
-                    )}
+                    <GearIcon name={item.name} type={item.type} />
 
                   </div>
 
@@ -5369,18 +3639,54 @@ const handleCreateReservation = async () => {
                 mt-2
               "
             >
-              {(
-                selectedLiveBooking.slotSystem ??
-                selectedLiveBooking.isSlotSystem ??
-                selectedLiveBooking.slotBased ??
-                false
-              )
-                ? "Slot Based"
-                : "Direct Booking"}
+              {selectedLiveBooking.slotSystem ?? selectedLiveBooking.isSlotSystem ?? false ? (
+              <span className="flex gap-2">
+                <span className="px-3 py-1 rounded-full text-xs font-black bg-cyan-400/15 border border-cyan-400/40 text-cyan-200 shadow-[0_0_14px_rgba(34,211,238,.25)]">Slot</span>
+                <span className="px-3 py-1 rounded-full text-xs font-bold border border-zinc-800 text-zinc-600 opacity-40 blur-[1px]">Direct</span>
+              </span>
+            ) : (
+              <span className="flex gap-2">
+                <span className="px-3 py-1 rounded-full text-xs font-bold border border-zinc-800 text-zinc-600 opacity-40 blur-[1px]">Slot</span>
+                <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-400/15 border border-emerald-400/40 text-emerald-200 shadow-[0_0_14px_rgba(52,211,153,.25)]">Direct</span>
+              </span>
+            )}
             </p>
 
           </div>
 
+
+          {/* BOOKING STATUS */}
+          <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800 p-4">
+            <p className="text-[9px] uppercase tracking-[0.16em] text-zinc-600 font-black">
+              Booking Status
+            </p>
+            <p className="text-sm font-bold text-white mt-2">
+              {selectedLiveBooking.status === "return_requested"
+                ? "Return requested"
+                : selectedLiveBooking.phase === "ended_not_returned"
+                  ? "Ended · not returned"
+                  : "Ongoing"}
+            </p>
+          </div>
+
+          {/* RETURN STATUS */}
+          <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800 p-4">
+            <p className="text-[9px] uppercase tracking-[0.16em] text-zinc-600 font-black">
+              Return Status
+            </p>
+            <p className="text-sm font-bold text-white mt-2">
+              {selectedLiveBooking.returnRequestedAt
+                ? "Requested"
+                : selectedLiveBooking.returnDeclinedAt
+                  ? "Declined"
+                  : "Not requested"}
+            </p>
+            {selectedLiveBooking.returnDeclineNote && (
+              <p className="text-xs text-amber-300 mt-2">
+                {selectedLiveBooking.returnDeclineNote}
+              </p>
+            )}
+          </div>
 
           {/* DATE */}
 
@@ -5627,6 +3933,77 @@ const handleCreateReservation = async () => {
 
         </motion.button>
 
+          {/* RETURN REQUESTED ICON: glows only when the student has requested a return */}
+          <div className="mt-4 flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <motion.div
+              animate={
+                selectedLiveBooking.returnRequestedAt
+                  ? { scale: [1, 1.12, 1] }
+                  : { scale: 1 }
+              }
+              transition={{ duration: 1.6, repeat: selectedLiveBooking.returnRequestedAt ? Infinity : 0 }}
+              className={`flex h-11 w-11 items-center justify-center rounded-xl border transition-all duration-500 ${
+                selectedLiveBooking.returnRequestedAt
+                  ? "border-amber-400/40 bg-amber-400/15 text-amber-300 shadow-[0_0_22px_rgba(251,191,36,.7)]"
+                  : "border-zinc-800 bg-zinc-950 text-zinc-700 opacity-50"
+              }`}
+            >
+              <Undo2 className="w-5 h-5" />
+            </motion.div>
+            <div>
+              <p className="text-[9px] uppercase tracking-[0.16em] text-zinc-600 font-black">Return</p>
+              <p className={`text-sm font-bold mt-1 ${selectedLiveBooking.returnRequestedAt ? "text-amber-200" : "text-zinc-500"}`}>
+                {selectedLiveBooking.returnRequestedAt
+                  ? "Return requested by student"
+                  : selectedLiveBooking.returnDeclinedAt
+                    ? "Last return was declined"
+                    : "No return requested"}
+              </p>
+            </div>
+          </div>
+
+          {showLiveIdCard && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              onClick={() => setShowLiveIdCard(false)}
+              className="fixed inset-0 z-[220] flex items-center justify-center bg-black/80 backdrop-blur-xl p-6"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 10 }}
+                animate={{ scale: 1, y: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="relative w-full max-w-md rounded-[28px] border border-zinc-800 bg-zinc-950 p-6"
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowLiveIdCard(false)}
+                  className="absolute right-4 top-4 text-zinc-500 hover:text-white"
+                >
+                  ✕
+                </button>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-emerald-400 font-black">Student ID card</p>
+                <h3 className="text-xl font-black text-white mt-1">{getStudentName(selectedLiveBooking)}</h3>
+                <p className="text-xs text-zinc-500 mt-1">{selectedLiveBooking.user?.rollNo || "No college ID on file"}</p>
+                <div className="mt-5 overflow-hidden rounded-2xl border border-zinc-800 bg-black/40">
+                  {selectedLiveBooking.user?.idCardPhoto ? (
+                    <img
+                      src={
+                        String(selectedLiveBooking.user.idCardPhoto).startsWith("http")
+                          ? selectedLiveBooking.user.idCardPhoto
+                          : `http://localhost:5000${selectedLiveBooking.user.idCardPhoto}`
+                      }
+                      alt="Uploaded student ID card"
+                      className="w-full max-h-[60vh] object-contain"
+                    />
+                  ) : (
+                    <p className="p-10 text-center text-sm text-zinc-500">This student has not uploaded an ID card photo.</p>
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+
 
         {/* =================================================
             LIVE STATUS
@@ -5698,7 +4075,11 @@ const handleCreateReservation = async () => {
                 text-emerald-300
               "
             >
-              Booking currently in progress
+              {selectedLiveBooking.phase === "return_requested"
+  ? "Return requested"
+  : selectedLiveBooking.phase === "ended_not_returned"
+    ? "Ended · not returned"
+    : "Booking currently in progress"}
             </p>
 
             <p
@@ -5710,7 +4091,11 @@ const handleCreateReservation = async () => {
                 mt-0.5
               "
             >
-              This booking is actively using the selected resource.
+              {selectedLiveBooking.phase === "return_requested"
+  ? "Waiting for staff to verify the equipment."
+  : selectedLiveBooking.phase === "ended_not_returned"
+    ? "The time has passed, but the equipment is still with the student."
+    : "This booking is actively using the selected resource."}
             </p>
 
           </div>
@@ -5812,11 +4197,17 @@ className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-
     "
   />
 </div>
-    <h3 className="font-black text-xl">
-      Requests (0)
+    <h3 className="font-black text-xl flex items-center justify-center gap-2">
+      Requests ({unreadRequests})
+      {unreadRequests > 0 && (
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-orange-400" />
+        </span>
+      )}
     </h3>
     <p className="text-zinc-500 text-sm mt-2">
-      Pending approvals
+      {unreadRequests > 0 ? `${unreadRequests} unread` : "All caught up"}
     </p>
   </button>
 
@@ -6113,51 +4504,6 @@ hover:shadow-[0_10px_35px_rgba(16,185,129,.18)]
       
 
 </div>
-{showLiveBookings && (
-
-<div className="
-fixed inset-0
-z-[200]
-bg-black/80
-backdrop-blur-xl
-flex
-items-center
-justify-center
-">
-
-<div className="
-bg-zinc-950
-border border-zinc-800
-rounded-[32px]
-p-10
-w-[600px]
-">
-
-<button
-onClick={() => setShowLiveBookings(false)}
-className="
-float-right
-text-2xl
-"
->
-✕
-</button>
-
-
-<h2 className="text-4xl font-black">
-Live Bookings
-</h2>
-
-<p className="text-zinc-500 mt-3">
-Current equipment and court reservations
-</p>
-
-
-</div>
-
-</div>
-
-)}
 
 
 
@@ -6404,7 +4750,7 @@ max-h-[65vh]
 
 <h3 className="text-3xl font-black mt-6">
 
-No announcements yet
+{loadErrors.notices ? "Couldn't load announcements" : "No announcements yet"}
 
 </h3>
 
@@ -6606,7 +4952,7 @@ text-sm
 "
 >
 
-👁 Audience : {item.audience}
+👁 Audience : {item.audience === "staff_admin" ? "Staff & Admin" : "Everyone"}
 
 </div>
 
@@ -6643,7 +4989,7 @@ font-semibold
 
 onClick={async () => {
   try {
-    await fetch(`http://localhost:5000/notices/${item.id}`, { method: 'DELETE' });
+    await authFetch(`http://localhost:5000/notices/${item.id}`, { method: 'DELETE' });
     setAnnouncements((prev) => prev.filter((a) => a.id !== item.id));
   } catch (err) {
     console.error('Failed to delete announcement', err);
@@ -6905,6 +5251,42 @@ Publish a new announcement
 
 <div className="space-y-7">
 
+{/* Title */}
+
+<div>
+
+<label className="block mb-3 font-bold text-orange-300">
+Title
+</label>
+
+<input
+type="text"
+value={announcementTitle}
+maxLength={120}
+onChange={(e)=>setAnnouncementTitle(e.target.value)}
+placeholder="e.g. Court 2 closed on Sunday"
+className="
+w-full
+h-16
+rounded-[22px]
+bg-zinc-900/80
+border
+border-zinc-800
+px-6
+outline-none
+transition-all
+duration-300
+focus:border-orange-500
+focus:shadow-[0_0_30px_rgba(249,115,22,.18)]
+"
+/>
+
+<div className="text-right text-zinc-500 text-sm mt-2">
+{announcementTitle.length}/120
+</div>
+
+</div>
+
 {/* Message */}
 
 <div>
@@ -6978,95 +5360,77 @@ mt-2
 
 <div>
 
-<label
-className="
-block
-mb-4
-font-bold
-text-orange-300
-"
->
-
+<label className="block mb-4 font-bold text-orange-300">
 Visible To
-
 </label>
 
-<div className="grid grid-cols-2 gap-5">
+<div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
 
 {[
 {
+value:"everyone",
 title:"Everyone",
 icon:"🌍",
 desc:"Students, Staff & Admin"
 },
 {
-title:"Admin & Staff",
+value:"staff_admin",
+title:"Staff & Admin",
 icon:"🛡",
-desc:"Only Admin and Staff"
+desc:"Only staff and admin. Students never see it."
 }
-].map((option)=>(
-
-<button
-
-key={option.title}
-
+].map((option)=>{
+const selected = announcementAudience===option.value;
+return (
+<motion.button
+key={option.value}
 type="button"
-
-onClick={()=>
-setAnnouncementAudience(option.title)
-}
-
+whileHover={{ y:-4 }}
+whileTap={{ scale:.98 }}
+aria-pressed={selected}
+onClick={()=>setAnnouncementAudience(option.value)}
 className={`
 group
 relative
-
 overflow-hidden
-
 rounded-[26px]
-
 border
-
 p-6
-
 text-left
-
-transition-all
+transition-colors
 duration-300
-
 ${
-announcementAudience===option.title
-
-?
-
-"border-orange-500 bg-orange-500/10 shadow-[0_0_35px_rgba(249,115,22,.25)] scale-[1.02]"
-
-:
-
-"border-zinc-800 bg-zinc-900/70 hover:border-orange-500/30 hover:-translate-y-1"
-
+selected
+? "border-orange-500 bg-orange-500/10 shadow-[0_0_35px_rgba(249,115,22,.25)]"
+: "border-zinc-800 bg-zinc-900/70 hover:border-orange-500/30"
 }
 `}
-
 >
 
 <div
 className="
 absolute
 inset-0
-
 bg-gradient-to-br
-
 from-orange-500/5
 via-transparent
 to-yellow-500/5
-
 opacity-0
-
 group-hover:opacity-100
-
 transition
 "
 />
+
+{selected && (
+<motion.span
+initial={{ scale:0 }}
+animate={{ scale:1 }}
+transition={{ type:"spring", stiffness:500, damping:22 }}
+className="absolute right-5 top-5 flex h-7 w-7 items-center justify-center rounded-full bg-orange-500 text-sm font-black text-black"
+>
+✓
+</motion.span>
+)}
 
 <div className="relative">
 
@@ -7074,47 +5438,72 @@ transition
 className="
 text-5xl
 mb-4
-
 transition-transform
 duration-300
-
 group-hover:scale-110
 "
 >
-
 {option.icon}
-
 </div>
 
-<h3
-className="
-text-xl
-font-black
-"
->
-
+<h3 className="text-xl font-black">
 {option.title}
-
 </h3>
 
-<p
-className="
-mt-2
-text-zinc-500
-text-sm
-leading-6
-"
->
-
+<p className="mt-2 text-zinc-500 text-sm leading-6">
 {option.desc}
-
 </p>
 
 </div>
 
-</button>
+</motion.button>
+);
+})}
 
+</div>
+
+</div>
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+<div>
+
+<label className="block mb-3 font-bold text-orange-300">
+Type
+</label>
+
+<select
+value={announcementType}
+onChange={(e)=>setAnnouncementType(e.target.value)}
+className="w-full h-16 rounded-[22px] bg-zinc-900 border border-zinc-800 px-6 outline-none transition-all duration-300 focus:border-orange-500 focus:shadow-[0_0_30px_rgba(249,115,22,.18)]"
+>
+{["announcement","general","event","important","sport","maintenance"].map((type)=>(
+<option key={type} value={type}>
+{type.charAt(0).toUpperCase()+type.slice(1)}
+</option>
 ))}
+</select>
+
+</div>
+
+<div>
+
+<label className="block mb-3 font-bold text-orange-300">
+Sport (optional)
+</label>
+
+<select
+value={announcementSportId}
+onChange={(e)=>setAnnouncementSportId(e.target.value)}
+className="w-full h-16 rounded-[22px] bg-zinc-900 border border-zinc-800 px-6 outline-none transition-all duration-300 focus:border-orange-500 focus:shadow-[0_0_30px_rgba(249,115,22,.18)]"
+>
+<option value="">All sports</option>
+{sports.map((sport:any)=>(
+<option key={sport.id} value={String(sport.id)}>
+{sport.name}
+</option>
+))}
+</select>
 
 </div>
 
@@ -7124,1060 +5513,104 @@ leading-6
 
 <div>
 
-<label
-className="
-block
-mb-3
-font-bold
-text-orange-300
-"
->
-
-Expiry
-
+<label className="block mb-3 font-bold text-orange-300">
+Expires (optional)
 </label>
 
 <input
-
-type="date"
-
+type="datetime-local"
 value={announcementExpiry}
-
-onChange={(e)=>
-setAnnouncementExpiry(e.target.value)
-}
-
-className="
-w-full
-h-16
-
-rounded-[22px]
-
-bg-zinc-900
-
-border
-border-zinc-800
-
-px-6
-
-outline-none
-
-transition-all
-
-focus:border-orange-500
-focus:shadow-[0_0_30px_rgba(249,115,22,.18)]
-"
+onChange={(e)=>setAnnouncementExpiry(e.target.value)}
+className="w-full h-16 rounded-[22px] bg-zinc-900 border border-zinc-800 px-6 outline-none transition-all duration-300 focus:border-orange-500 focus:shadow-[0_0_30px_rgba(249,115,22,.18)]"
 />
 
+<p className="mt-2 text-sm text-zinc-500">
+Leave empty to keep it visible until you delete it. Expired announcements hide automatically.
+</p>
+
 </div>
+
+{announcementError && (
+<motion.div
+role="alert"
+initial={{ opacity:0, y:-6 }}
+animate={{ opacity:1, y:0 }}
+className="mt-8 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-sm font-semibold text-red-300"
+>
+{announcementError}
+</motion.div>
+)}
 
 {/* Publish Button */}
 
 <button
 
 onClick={async () => {
+  if (announcementSubmitting) return;
+
+  const title = announcementTitle.trim();
+  const message = announcementMessage.trim();
+
+  if (!title) {
+    setAnnouncementError("Please enter a title.");
+    return;
+  }
+  if (!message) {
+    setAnnouncementError("Please write a message.");
+    return;
+  }
+
+  let expiresAt: string | undefined;
+  if (announcementExpiry) {
+    const expiryDate = new Date(announcementExpiry);
+    if (Number.isNaN(expiryDate.getTime()) || expiryDate.getTime() <= Date.now()) {
+      setAnnouncementError("Expiry must be a future date and time.");
+      return;
+    }
+    expiresAt = expiryDate.toISOString();
+  }
+
+  setAnnouncementError("");
+  setAnnouncementSubmitting(true);
+
   try {
-    if (!announcementMessage.trim()) return;
-    const res = await fetch('http://localhost:5000/notices', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: announcementMessage, audience: announcementAudience, title: 'Announcement', expiry: announcementExpiry }),
-    });
-    const created = await res.json();
-    setAnnouncements((prev) => [created, ...prev]);
-    setAnnouncementMessage('');
-    setAnnouncementAudience('Everyone');
-    setAnnouncementExpiry('');
-    setShowCreateAnnouncement(false);
-  } catch (err) {
-    console.error('Failed to create announcement', err);
-    // fallback to local state
-    setAnnouncements((prev) => [
-      {
-        id: Date.now(),
-        title: 'Announcement',
-        message: announcementMessage,
+    const res = await authFetch("http://localhost:5000/notices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        message,
         audience: announcementAudience,
-        expiry: announcementExpiry,
-        createdAt: 'Just now',
-      },
-      ...prev,
-    ]);
-    setAnnouncementMessage('');
-    setAnnouncementAudience('Everyone');
-    setAnnouncementExpiry('');
-    setShowCreateAnnouncement(false);
-  }
-}}
-
-className="
-relative
-
-group
-
-overflow-hidden
-
-mt-10
-
-w-full
-h-16
-
-rounded-[24px]
-
-bg-gradient-to-r
-from-yellow-400
-via-orange-500
-to-orange-600
-
-text-black
-
-font-black
-text-xl
-
-shadow-[0_0_40px_rgba(249,115,22,.35)]
-
-hover:scale-[1.02]
-active:scale-[.98]
-
-transition-all
-duration-300
-"
-
->
-
-<div
-className="
-absolute
-inset-0
-
--translate-x-full
-
-group-hover:translate-x-full
-
-transition-transform
-duration-[1200ms]
-
-bg-gradient-to-r
-from-transparent
-via-white/25
-to-transparent
-"
-/>
-
-<span
-className="
-relative
-z-10
-
-flex
-items-center
-justify-center
-gap-3
-"
->
-
-<span
-className="
-text-2xl
-
-group-hover:rotate-12
-group-hover:scale-125
-
-transition-all
-"
->
-
-🚀
-
-</span>
-
-Publish Announcement
-
-</span>
-
-</button>
-
-</div>
-
-
-
-
-
-
-
-
-
-
-</div>
-
-
-
-
-
-
-<div
-className="
-absolute
-
-bottom-0
-left-1/2
-
--translate-x-1/2
-
-w-[75%]
-h-14
-
-bg-orange-500/20
-
-blur-3xl
-
-pointer-events-none
-
-animate-pulse
-"
-/>
-
-</motion.div>
-
-</div>
-
-)}
-
-
-
-
-
-
-
-
-
-
-
-{showRequests && (
-
-<div className="
-fixed inset-0
-z-[200]
-bg-black/80
-backdrop-blur-xl
-flex
-items-center
-justify-center
-">
-
-<div
-className="
-relative
-
-w-[900px]
-h-[88vh]
-
-overflow-hidden
-
-rounded-[36px]
-
-bg-gradient-to-br
-from-zinc-950
-via-black
-to-zinc-950
-
-border
-border-orange-500/20
-
-shadow-[0_0_70px_rgba(249,115,22,.18)]
-"
->
-
-<div
-className="
-absolute
-inset-0
-pointer-events-none
-
-bg-gradient-to-br
-from-orange-500/5
-via-transparent
-to-yellow-500/5
-"
-/>
-
-<button
-
-onClick={()=>setShowRequests(false)}
-
-className="
-absolute
-top-6
-right-6
-
-z-30
-
-w-14
-h-14
-
-rounded-2xl
-
-flex
-items-center
-justify-center
-
-bg-zinc-900
-
-border
-border-zinc-800
-
-hover:bg-red-500/20
-hover:border-red-500/30
-hover:rotate-90
-
-transition-all
-duration-300
-"
-
->
-
-✕
-
-</button>
-
-<div className="relative z-20 p-8">
-
-<div className="flex justify-between items-start">
-
-<div>
-
-<h2
-className="
-text-5xl
-font-black
-
-bg-gradient-to-r
-from-yellow-300
-via-orange-400
-to-orange-500
-
-bg-clip-text
-text-transparent
-"
->
-
-Anonymous Requests
-
-</h2>
-
-<p className="text-zinc-500 mt-2">
-
-Requests visible to Staff & Admin
-
-</p>
-
-</div>
-
-<div className="flex items-center gap-3">
-
-<select
-
-className="
-h-12
-
-rounded-xl
-
-bg-zinc-900
-
-border
-border-zinc-800
-
-px-4
-
-outline-none
-
-focus:border-orange-500
-"
-
->
-
-<option>Today's Requests</option>
-<option>Yesterday</option>
-<option>2 Days Ago</option>
-<option>Last Week</option>
-
-</select>
-
-<button
-
-onClick={()=>setShowCreateRequest(true)}
-
-className="
-group
-
-relative
-
-overflow-hidden
-
-h-12
-
-px-7
-
-rounded-2xl
-
-font-black
-
-bg-gradient-to-r
-from-yellow-400
-via-orange-500
-to-orange-600
-
-text-black
-
-hover:scale-105
-
-transition-all
-duration-300
-
-shadow-[0_0_30px_rgba(249,115,22,.35)]
-"
-
->
-
-<div
-className="
-absolute
-inset-0
-
--translate-x-full
-
-group-hover:translate-x-full
-
-transition-transform
-duration-1000
-
-bg-gradient-to-r
-from-transparent
-via-white/20
-to-transparent
-"
-/>
-
-<span className="relative z-10">
-
-＋ New Request
-
-</span>
-
-</button>
-
-</div>
-
-</div>
-
-</div>
-
-<div
-className="
-px-8
-
-pb-8
-
-overflow-y-auto
-
-h-[70vh]
-
-space-y-5
-"
->
-
-{requests.map((request,index)=>(
-
-<motion.div
-
-key={request.id}
-
-initial={{
-opacity:0,
-y:30
-}}
-
-animate={{
-opacity:1,
-y:0
-}}
-
-transition={{
-delay:index*0.06
-}}
-
-className="
-group
-
-relative
-
-overflow-hidden
-
-rounded-[32px]
-
-border
-border-orange-500/15
-
-bg-gradient-to-br
-from-zinc-900
-to-zinc-950
-
-p-7
-
-hover:border-orange-500/35
-
-hover:-translate-y-1
-
-transition-all
-duration-300
-
-shadow-[0_0_30px_rgba(249,115,22,.08)]
-"
-
->
-
-<div
-className="
-absolute
-inset-0
-
-opacity-0
-
-group-hover:opacity-100
-
-transition
-
-bg-gradient-to-r
-from-orange-500/5
-via-transparent
-to-yellow-500/5
-"
-/>
-
-<div className="relative">
-
-<div className="flex justify-between">
-
-<div className="flex gap-5">
-
-<div
-className="
-w-14
-h-14
-
-rounded-2xl
-
-flex
-items-center
-justify-center
-
-bg-orange-500/10
-
-border
-border-orange-500/20
-
-text-3xl
-"
->
-
-🎓
-
-</div>
-
-<div>
-
-<h3
-className="
-text-2xl
-font-black
-"
->
-
-Anonymous Staff
-
-</h3>
-
-<p
-className="
-text-zinc-500
-text-sm
-mt-1
-"
->
-
-Identity Hidden
-
-</p>
-
-</div>
-
-</div>
-
-<div
-className="
-flex
-items-center
-gap-3
-"
->
-
-{request.viewed ? (
-
-<div
-className="
-px-4
-py-2
-
-rounded-full
-
-bg-emerald-500/15
-
-text-emerald-400
-
-font-bold
-text-sm
-"
->
-
-Seen
-
-</div>
-
-):(
-
-<div
-className="
-px-4
-py-2
-
-rounded-full
-
-bg-orange-500/15
-
-text-orange-300
-
-font-bold
-text-sm
-
-animate-pulse
-"
->
-
-New
-
-</div>
-
-)}
-
-</div>
-
-</div>
-
-<p
-className="
-mt-8
-
-text-zinc-300
-
-leading-8
-
-text-[17px]
-"
->
-
-{request.message}
-
-</p>
-
-<div
-className="
-mt-8
-
-flex
-justify-between
-items-center
-"
->
-
-<div className="flex gap-3">
-
-<div
-className="
-px-4
-py-2
-
-rounded-full
-
-bg-zinc-800
-
-text-zinc-400
-
-text-sm
-"
->
-
-📅 {request.date}
-
-</div>
-
-<div
-className="
-px-4
-py-2
-
-rounded-full
-
-bg-zinc-800
-
-text-zinc-400
-
-text-sm
-"
->
-
-🕒 {request.time}
-
-</div>
-
-</div>
-
-<button
-
-className="
-w-12
-h-12
-
-rounded-xl
-
-bg-red-500/10
-
-border
-border-red-500/20
-
-hover:bg-red-500
-
-hover:text-white
-
-transition-all
-"
-
->
-
-🗑
-
-</button>
-
-</div>
-
-</div>
-
-</motion.div>
-
-))}
-
-</div>
-</div>
-
-</div>
-
-)}
-{/* ================= CREATE REQUEST ================= */}
-
-{showCreateRequest && (
-
-<div
-className="
-fixed
-inset-0
-
-z-[260]
-
-bg-black/85
-
-backdrop-blur-xl
-
-flex
-items-center
-justify-center
-"
->
-
-<motion.div
-
-initial={{
-opacity:0,
-scale:.9,
-y:40
-}}
-
-animate={{
-opacity:1,
-scale:1,
-y:0
-}}
-
-exit={{
-opacity:0,
-scale:.9
-}}
-
-transition={{
-duration:.35,
-ease:[0.16,1,0.3,1]
-}}
-
-className="
-relative
-
-w-[760px]
-
-rounded-[36px]
-
-overflow-hidden
-
-bg-gradient-to-br
-from-zinc-950
-via-black
-to-zinc-950
-
-border
-border-orange-500/20
-
-shadow-[0_0_80px_rgba(249,115,22,.22)]
-"
->
-
-<div
-className="
-absolute
-inset-0
-
-pointer-events-none
-
-bg-gradient-to-br
-from-orange-500/5
-via-transparent
-to-yellow-500/5
-"
-/>
-
-<button
-
-onClick={()=>{
-setShowCreateRequest(false);
-setRequestMessage("");
-}}
-
-className="
-absolute
-top-6
-right-6
-
-z-20
-
-w-14
-h-14
-
-rounded-2xl
-
-flex
-items-center
-justify-center
-
-bg-zinc-900
-
-border
-border-zinc-800
-
-text-zinc-400
-
-hover:text-white
-hover:bg-red-500/15
-hover:border-red-500/40
-
-hover:rotate-90
-hover:scale-110
-
-transition-all
-duration-300
-"
-
->
-
-✕
-
-</button>
-
-<div
-className="
-relative
-z-10
-
-p-10
-
-max-h-[85vh]
-
-overflow-y-auto
-"
-
->
-
-<h2
-className="
-text-4xl
-font-black
-
-bg-gradient-to-r
-from-yellow-300
-via-orange-400
-to-orange-500
-
-bg-clip-text
-text-transparent
-"
-
->
-
-New Anonymous Request
-
-</h2>
-
-<p
-className="
-mt-2
-mb-8
-
-text-zinc-500
-"
-
->
-
-Your identity will remain hidden from everyone.
-
-</p>
-
-<label
-className="
-block
-
-mb-4
-
-font-bold
-
-text-orange-300
-"
-
->
-
-Message
-
-</label>
-
-<textarea
-
-value={requestMessage}
-
-onChange={(e)=>setRequestMessage(e.target.value)}
-
-rows={10}
-
-placeholder="Write your request, suggestion or thought..."
-
-className="
-w-full
-
-rounded-[28px]
-
-bg-zinc-900/80
-
-border
-border-zinc-800
-
-p-6
-
-resize-none
-
-outline-none
-
-transition-all
-duration-300
-
-focus:border-orange-500
-focus:shadow-[0_0_35px_rgba(249,115,22,.22)]
-"
-/>
-
-<div
-className="
-flex
-justify-between
-
-mt-3
-"
->
-
-<p
-className="
-text-zinc-600
-text-sm
-"
->
-
-Anonymous • Staff Board
-
-</p>
-
-<p
-className="
-text-zinc-500
-text-sm
-"
->
-
-{requestMessage.length}/1000
-
-</p>
-
-</div>
-
-{/* Send Button */}
-
-<button
-
-onClick={async () => {
-  try {
-    if (!requestMessage.trim()) return;
-    const body = {
-      message: requestMessage,
-      date: new Date().toLocaleDateString(),
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      viewed: false,
-    };
-    const res = await fetch('http://localhost:5000/anonymous-requests', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+        type: announcementType,
+        sportId: announcementSportId || null,
+        expiresAt,
+      }),
     });
-    const created = await res.json();
-    setRequests((prev) => [created, ...prev]);
-    setRequestMessage('');
-    setShowCreateRequest(false);
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      setAnnouncementError(data?.message || "Could not publish the announcement.");
+      return;
+    }
+
+    setAnnouncements((prev) => [data, ...prev]);
+    setAnnouncementTitle("");
+    setAnnouncementMessage("");
+    setAnnouncementAudience("everyone");
+    setAnnouncementType("announcement");
+    setAnnouncementSportId("");
+    setAnnouncementExpiry("");
+    setShowCreateAnnouncement(false);
   } catch (err) {
-    console.error('Failed to post anonymous request', err);
-    setRequests((prev) => [
-      {
-        id: Date.now(),
-        message: requestMessage,
-        date: new Date().toLocaleDateString(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        viewed: false,
-      },
-      ...prev,
-    ]);
-    setRequestMessage('');
-    setShowCreateRequest(false);
+    console.error("Failed to create announcement", err);
+    setAnnouncementError("Could not reach the server. Check that the backend is running and try again.");
+  } finally {
+    setAnnouncementSubmitting(false);
   }
 }}
+
+disabled={announcementSubmitting}
 
 className="
 relative
@@ -8260,13 +5693,29 @@ transition-all
 
 </span>
 
-Send Request
+{announcementSubmitting ? "Publishing..." : "Publish Announcement"}
 
 </span>
 
 </button>
 
 </div>
+
+
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
 
 <div
 className="
@@ -8295,6 +5744,18 @@ animate-pulse
 </div>
 
 )}
+
+
+
+
+
+
+
+
+
+
+
+<AnonymousRequestsModal open={showRequests} onClose={() => { setShowRequests(false); }} />
 
 
 
@@ -9401,34 +6862,6 @@ animate-[fadeUp_.25s_ease]
 "
 >
 
-<button
-onClick={async()=>{
-setShowManageSport(false);
-setSelectedSport(null);
-}}
-className="
-absolute
-top-6
-right-6
-
-w-12
-h-12
-
-rounded-xl
-
-border
-border-zinc-800
-
-hover:border-red-500
-
-transition
-
-text-2xl
-"
->
-✕
-</button>
-
 <div className="p-10">
 
 {/* Back */}
@@ -9592,10 +7025,17 @@ font-black leading-none font-black tracking-tight">
 </h1>
 
 <div className="flex items-center gap-4 mt-3 text-[17px]">
+{selectedSport.maintenance ? (
+<span className="flex items-center gap-2 text-orange-400 text-sm font-semibold">
+<span className="w-2 h-2 rounded-full bg-orange-400"></span>
+Maintenance
+</span>
+) : (
 <span className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
 <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
 Active
 </span>
+)}
 
 <span className="text-zinc-500">
 <span className="text-zinc-500">
@@ -9669,10 +7109,6 @@ shadow-[0_0_30px_rgba(59,130,246,.15)]
 Resources
 </p>
 
-<p className="text-zinc-500">
-Total {selectedSport.resourceType || "Court"}s
-</p>
-
 </div>
 
 <div
@@ -9695,10 +7131,6 @@ shadow-[0_0_30px_rgba(16,185,129,.15)]
 
 <p className="uppercase text-sm tracking-wider mt-3">
 Gears
-</p>
-
-<p className="text-zinc-500">
-Total Gears
 </p>
 
 </div>
@@ -9731,12 +7163,6 @@ Slot System
 
 </p>
 
-<p className="text-zinc-500">
-
-Dynamic Booking
-
-</p>
-
 </div>
 
 <div
@@ -9756,22 +7182,12 @@ shadow-[0_0_30px_rgba(249,115,22,.15)]
 
 <p className="text-4xl font-black text-orange-400">
 
-{maintenanceEnabled ? "ON" : "OFF"}
+{selectedSport.maintenance ? "ON" : "OFF"}
 
 </p>
 <p className="uppercase text-sm tracking-wider mt-3">
 
 Maintenance
-
-</p>
-
-<p className="text-zinc-500">
-
-{maintenanceEnabled
-
-? "Maintenance Active"
-
-: "No Active"}
 
 </p>
 
@@ -9836,7 +7252,16 @@ Capacity:
 </button>
 
 <button
-onClick={() => setShowMaintenancePopup(true)}
+onClick={() => {
+  setMaintenanceMessage("");
+  setMaintenanceWindowStart("");
+  setMaintenanceWindowEnd("");
+  setSelectedMaintenanceResources([]);
+  setMaintenanceScope("resources");
+  setMaintenanceConflict(null);
+  setShowMaintenancePopup(true);
+  void fetchMaintenanceWindows(selectedSport.id);
+}}
 className="
 rounded-[24px]
 bg-zinc-900
@@ -10701,7 +8126,7 @@ Reserve Now
 
 </motion.div>
 
-)};
+)}
 
 
 
@@ -11061,6 +8486,7 @@ Save Changes
 {showMaintenancePopup && (
 
 <motion.div
+key="maintenance-popup"
 initial={{opacity:0}}
 animate={{opacity:1}}
 exit={{opacity:0}}
@@ -11073,46 +8499,31 @@ backdrop-blur-xl
 flex
 items-center
 justify-center
+p-6
 "
 >
 
 <motion.div
-initial={{
-scale:.95,
-y:20,
-opacity:0
-}}
-animate={{
-scale:1,
-y:0,
-opacity:1
-}}
-exit={{
-scale:.95,
-y:20,
-opacity:0
-}}
-transition={{
-type:"spring",
-stiffness:180,
-damping:18
-}}
+initial={{ scale:.95, y:20, opacity:0 }}
+animate={{ scale:1, y:0, opacity:1 }}
+exit={{ scale:.95, y:20, opacity:0 }}
+transition={{ type:"spring", stiffness:180, damping:18 }}
+onClick={(e)=>e.stopPropagation()}
 className="
-w-[1080px]
-h-[760px]
+w-[760px]
+max-h-[88vh]
 rounded-[36px]
 border
 border-orange-500/20
 bg-zinc-950
 shadow-[0_0_90px_rgba(249,115,22,.18)]
-overflow-hidden
-flex
+overflow-y-auto
 "
 >
 
-{/* LEFT */}
+<div className="p-8">
 
-<div className="flex-1 p-8 overflow-y-auto">
+{/* Header */}
 
 <div className="flex items-start justify-between">
 
@@ -11156,25 +8567,27 @@ Manage maintenance for {selectedSport?.name}
 
 </div>
 
-<div className="flex items-center gap-4">
+<div className="flex items-center gap-3">
 
-<div
+<button
+type="button"
+onClick={()=>setShowActiveMaintenanceList(true)}
 className="
-px-4
-py-2
-rounded-full
-bg-orange-500/10
+h-12
+px-5
+rounded-2xl
 border
-border-orange-500/20
-text-orange-400
+border-orange-500/30
+bg-orange-500/5
+text-orange-300
 text-sm
 font-semibold
+hover:bg-orange-500/10
+transition
 "
 >
-
-● Scheduled
-
-</div>
+Active Maintenance ({activeMaintenanceWindows.length})
+</button>
 
 <button
 
@@ -11199,9 +8612,7 @@ transition
 
 {/* Maintenance Scope */}
 
-<div>
-
-<div className="flex items-center justify-between">
+<div className="mt-8">
 
 <div>
 
@@ -11212,29 +8623,6 @@ Maintenance Scope
 <p className="text-zinc-500 text-sm mt-1">
 Choose where maintenance should apply.
 </p>
-
-</div>
-
-<select
-className="
-h-12
-rounded-2xl
-bg-zinc-900
-border
-border-zinc-800
-px-4
-outline-none
-text-orange-300
-"
->
-
-<option>Running</option>
-
-<option>Scheduled</option>
-
-<option>Completed</option>
-
-</select>
 
 </div>
 
@@ -11257,15 +8645,19 @@ whileHover={{scale:1.02}}
 
 whileTap={{scale:.97}}
 
-className="
+onClick={()=>setMaintenanceScope("resources")}
+
+className={`
 flex-1
 h-12
 rounded-xl
-bg-orange-500
-text-black
 font-bold
-shadow-[0_0_25px_rgba(249,115,22,.35)]
-"
+transition
+${maintenanceScope==="resources"
+  ? "bg-orange-500 text-black shadow-[0_0_25px_rgba(249,115,22,.35)]"
+  : "text-zinc-400 hover:text-white"
+}
+`}
 
 >
 
@@ -11273,77 +8665,47 @@ Specific Resources
 
 </motion.button>
 
-<button
+<motion.button
 
-className="
+whileHover={{scale:1.02}}
+
+whileTap={{scale:.97}}
+
+onClick={()=>setMaintenanceScope("entire")}
+
+className={`
 flex-1
 h-12
 rounded-xl
-text-zinc-400
-hover:text-white
+font-bold
 transition
-"
+${maintenanceScope==="entire"
+  ? "bg-orange-500 text-black shadow-[0_0_25px_rgba(249,115,22,.35)]"
+  : "text-zinc-400 hover:text-white"
+}
+`}
 
 >
 
 Entire Sport
 
-</button>
+</motion.button>
 
 </div>
 
 </div>
 
-{/* Search */}
+{maintenanceScope === "resources" && (
 
 <div className="mt-8">
 
-<div className="flex justify-between items-center">
-
 <p className="font-bold text-xl">
-
 Select Resources
-
 </p>
 
 <div
 className="
-w-[280px]
-h-12
-rounded-2xl
-bg-zinc-900
-border
-border-zinc-800
-flex
-items-center
-px-4
-"
->
-
-<input
-
-placeholder="Search resources..."
-
-className="
-flex-1
-bg-transparent
-outline-none
-text-sm
-"
-
-/>
-
-<MagnifyingGlassIcon
-className="w-5 h-5 text-zinc-500"
-/>
-
-</div>
-
-</div>
-
-<div
-className="
-mt-6
+mt-4
 space-y-3
 max-h-[260px]
 overflow-y-auto
@@ -11351,53 +8713,20 @@ pr-2
 "
 >
 
-{selectedSport?.resourceUnits?.map((resource:any)=>{
+{(selectedSport?.resourceUnits || []).map((resource:any)=>{
 
-const checked =
-selectedMaintenanceResources.includes(resource.id);
+const alreadyInMaintenance = resource.status === "maintenance";
+const checked = selectedMaintenanceResources.includes(resource.id);
 
 return(
 
-<motion.div
+<div
 
 key={resource.id}
 
-layout
-
-whileHover={{
-y:-3,
-scale:1.01
-}}
-
-whileTap={{
-scale:.98
-}}
-
-className={`
-rounded-2xl
-border
-cursor-pointer
-transition-all
-duration-300
-p-5
-flex
-justify-between
-items-center
-
-${
-checked
-?
-
-"border-orange-500 bg-orange-500/10 shadow-[0_0_20px_rgba(249,115,22,.20)]"
-
-:
-
-"border-zinc-800 bg-zinc-900 hover:border-orange-500/30"
-
-}
-`}
-
 onClick={()=>{
+
+if (alreadyInMaintenance) return;
 
 if(checked){
 
@@ -11424,6 +8753,29 @@ resource.id
 }
 
 }}
+
+className={`
+rounded-2xl
+border
+p-5
+flex
+justify-between
+items-center
+transition-all
+duration-300
+
+${
+alreadyInMaintenance
+?
+"cursor-not-allowed border-zinc-800 bg-zinc-900/40 opacity-50"
+:
+checked
+?
+"cursor-pointer border-orange-500 bg-orange-500/10 shadow-[0_0_20px_rgba(249,115,22,.20)]"
+:
+"cursor-pointer border-zinc-800 bg-zinc-900 hover:border-orange-500/30"
+}
+`}
 
 >
 
@@ -11457,7 +8809,7 @@ className="w-6 h-6 text-orange-400"
 
 <p className="text-xs text-zinc-500">
 
-{resource.type}
+{alreadyInMaintenance ? "Already in maintenance" : resource.type}
 
 </p>
 
@@ -11465,8 +8817,7 @@ className="w-6 h-6 text-orange-400"
 
 </div>
 
-<div>
-
+{!alreadyInMaintenance && (
 <div
 className={`
 w-6
@@ -11487,18 +8838,23 @@ ${checked
 }
 `}
 />
+)}
 
 </div>
-
-</motion.div>
 
 );
 
 })}
 
+{(selectedSport?.resourceUnits || []).length === 0 && (
+<p className="text-sm text-zinc-500">This sport has no resources yet.</p>
+)}
+
 </div>
 
 </div>
+
+)}
 
 {/* Schedule */}
 
@@ -11512,7 +8868,7 @@ Maintenance Schedule
 
 <p className="text-zinc-500 text-sm mt-1">
 
-Choose when maintenance will run.
+Choose when maintenance starts and ends.
 
 </p>
 
@@ -11536,6 +8892,8 @@ Start
 
 <input
 type="datetime-local"
+value={maintenanceWindowStart}
+onChange={(e)=>setMaintenanceWindowStart(e.target.value)}
 className="
 mt-3
 w-full
@@ -11564,6 +8922,8 @@ End
 
 <input
 type="datetime-local"
+value={maintenanceWindowEnd}
+onChange={(e)=>setMaintenanceWindowEnd(e.target.value)}
 className="
 mt-3
 w-full
@@ -11618,7 +8978,7 @@ outline-none
 
         className="
         mt-4
-        h-[140px]
+        h-[120px]
         w-full
         rounded-3xl
         border
@@ -11637,6 +8997,44 @@ outline-none
     />
 
 </div>
+
+{maintenanceConflict && (
+
+<div className="mt-6 rounded-2xl border border-red-500/30 bg-red-500/10 p-5">
+
+<p className="font-bold text-red-300">
+This will cancel {maintenanceConflict.conflicts.length} existing reservation(s)
+</p>
+
+<div className="mt-3 space-y-2 max-h-[140px] overflow-y-auto pr-1">
+{maintenanceConflict.conflicts.map((c:any)=>(
+<p key={c.reservationId} className="text-sm text-red-200">
+{c.teamName} on {c.resourceName} · {new Date(c.startDateTime).toLocaleString()} - {new Date(c.endDateTime).toLocaleString()}
+</p>
+))}
+</div>
+
+<div className="mt-4 flex gap-3">
+<button
+type="button"
+onClick={()=>setMaintenanceConflict(null)}
+className="h-11 px-5 rounded-xl border border-zinc-700 hover:border-zinc-500 transition"
+>
+Cancel
+</button>
+<button
+type="button"
+disabled={maintenanceSaving}
+onClick={()=>void handleSaveMaintenance(true)}
+className="h-11 px-5 rounded-xl bg-red-500 text-black font-bold hover:bg-red-400 transition disabled:opacity-60"
+>
+Cancel reservation(s) and continue
+</button>
+</div>
+
+</div>
+
+)}
 
 {/* Footer */}
 
@@ -11684,6 +9082,10 @@ outline-none
                 scale:.97
             }}
 
+            disabled={maintenanceSaving}
+
+            onClick={() => void handleSaveMaintenance(false)}
+
             className="
             flex-1
             h-14
@@ -11695,354 +9097,121 @@ outline-none
             font-bold
             text-black
             shadow-[0_0_30px_rgba(249,115,22,.35)]
+            disabled:opacity-60
             "
 
         >
 
-            Save Maintenance
-
-        </motion.button>
-
-    </div>
-
-    {/* Small Schedule Button */}
-
-    <div className="flex justify-center mt-7">
-
-        <motion.button
-
-            whileHover={{
-                scale:1.04,
-                y:-2
-            }}
-
-            whileTap={{
-                scale:.97
-            }}
-
-            className="
-            px-7
-            h-12
-            rounded-full
-            border
-            border-orange-500/30
-            bg-orange-500/5
-            text-orange-300
-            font-semibold
-            hover:bg-orange-500/10
-            transition-all
-            shadow-[0_0_18px_rgba(249,115,22,.10)]
-            "
-
-        >
-
-            ＋ Schedule Another Maintenance
+            {maintenanceSaving ? "Scheduling..." : "Schedule Maintenance"}
 
         </motion.button>
 
     </div>
 
 </div>
-
-</div>
-
-{/* RIGHT PANEL */}
-
-<motion.div
-
-initial={{ x:40, opacity:0 }}
-
-animate={{ x:0, opacity:1 }}
-
-transition={{ delay:.2 }}
-
-className="
-w-[360px]
-rounded-[34px]
-border
-border-orange-500/15
-bg-gradient-to-b
-from-zinc-950
-to-black
-p-6
-shadow-[0_0_40px_rgba(249,115,22,.10)]
-"
-
->
-
-<div className="flex justify-between items-center">
-
-<div>
-
-<h2 className="text-2xl font-black">
-
-Active Maintenance
-
-</h2>
-
-<p className="text-zinc-500 text-sm mt-1">
-
-Currently scheduled maintenance
-
-</p>
-
-</div>
-
-<div
-className="
-w-9
-h-9
-rounded-full
-bg-orange-500/10
-flex
-items-center
-justify-center
-text-orange-400
-font-bold
-"
->
-
-{selectedSport?.resourceUnits?.filter(
-(r:any)=>r.status==="maintenance"
-).length}
-
-</div>
-
-</div>
-
-<div
-className="
-mt-6
-space-y-5
-max-h-[610px]
-overflow-y-auto
-pr-2
-"
->
-
-{selectedSport?.resourceUnits
-?.filter((r:any)=>r.status==="maintenance")
-.map((resource:any,index:number)=>(
-
-<motion.div
-
-key={resource.id}
-
-initial={{
-opacity:0,
-y:25
-}}
-
-animate={{
-opacity:1,
-y:0
-}}
-
-transition={{
-delay:index*.08
-}}
-
-whileHover={{
-y:-4
-}}
-
-className="
-rounded-3xl
-border
-border-orange-500/15
-bg-zinc-900
-p-5
-"
-
->
-
-<div className="flex justify-between items-center">
-
-<span
-className="
-rounded-full
-bg-orange-500/10
-px-4
-py-1
-text-xs
-font-bold
-text-orange-300
-"
->
-
-Running
-
-</span>
-
-<span
-className="
-rounded-full
-bg-emerald-500/10
-px-3
-py-1
-text-xs
-font-semibold
-text-emerald-300
-"
->
-
-Live
-
-</span>
-
-</div>
-
-<div className="mt-5">
-
-<h3 className="font-bold text-lg">
-
-{resource.name}
-
-</h3>
-
-<p className="text-zinc-500 text-sm mt-2">
-
-{resource.maintenanceMessage ||
-
-"No maintenance message."
-
-}
-
-</p>
-
-</div>
-
-<div className="mt-6 flex gap-3">
-
-<motion.button
-
-whileHover={{
-scale:1.05
-}}
-
-whileTap={{
-scale:.95
-}}
-
-className="
-flex-1
-h-11
-rounded-xl
-border
-border-zinc-700
-hover:border-orange-500
-transition
-"
-
->
-
-Edit
-
-</motion.button>
-
-<motion.button
-
-whileHover={{
-scale:1.05
-}}
-
-whileTap={{
-scale:.95
-}}
-
-className="
-flex-1
-h-11
-rounded-xl
-border
-border-red-500/30
-text-red-400
-hover:bg-red-500/10
-transition
-"
-
->
-
-Delete
-
-</motion.button>
 
 </div>
 
 </motion.div>
 
-))}
-
-{selectedSport?.resourceUnits?.filter(
-(r:any)=>r.status==="maintenance"
-).length===0 && (
-
-<div
-className="
-rounded-3xl
-border
-border-zinc-800
-bg-zinc-900
-p-10
-text-center
-"
->
-
-<WrenchScrewdriverIcon
-className="
-mx-auto
-w-12
-h-12
-text-zinc-600
-"
-/>
-
-<p className="mt-5 text-zinc-500">
-
-No active maintenance.
-
-</p>
-
-</div>
+</motion.div>
 
 )}
 
-</div>
+{showActiveMaintenanceList && (
 
-<motion.button
-
-whileHover={{
-scale:1.02
-}}
-
-whileTap={{
-scale:.98
-}}
-
+<motion.div
+key="active-maintenance-list"
+initial={{opacity:0}}
+animate={{opacity:1}}
+exit={{opacity:0}}
+onClick={()=>setShowActiveMaintenanceList(false)}
 className="
-mt-6
-w-full
-h-14
-rounded-2xl
-border
-border-zinc-700
-bg-zinc-900
-hover:border-orange-500
-transition
+fixed
+inset-0
+z-[710]
+bg-black/80
+backdrop-blur-xl
+flex
+items-center
+justify-center
+p-6
 "
-
 >
 
-View All Notices →
+<motion.div
+initial={{ scale:.95, y:20, opacity:0 }}
+animate={{ scale:1, y:0, opacity:1 }}
+exit={{ scale:.95, y:20, opacity:0 }}
+onClick={(e)=>e.stopPropagation()}
+className="
+w-[560px]
+max-h-[80vh]
+overflow-y-auto
+rounded-[32px]
+border
+border-orange-500/20
+bg-zinc-950
+p-7
+shadow-[0_0_80px_rgba(249,115,22,.18)]
+"
+>
 
-</motion.button>
+<div className="flex items-center justify-between">
+<h2 className="text-2xl font-black">Active Maintenance</h2>
+<button
+type="button"
+onClick={()=>setShowActiveMaintenanceList(false)}
+className="text-3xl text-zinc-500 hover:text-red-400 transition"
+>
+✕
+</button>
+</div>
+
+<p className="text-zinc-500 text-sm mt-1">
+Currently scheduled maintenance for {selectedSport?.name}
+</p>
+
+<div className="mt-6 space-y-3">
+
+{activeMaintenanceWindows.length === 0 && (
+<div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-8 text-center">
+<WrenchScrewdriverIcon className="mx-auto w-10 h-10 text-zinc-600"/>
+<p className="mt-4 text-zinc-500">No active maintenance.</p>
+</div>
+)}
+
+{activeMaintenanceWindows.map((w:any)=>(
+<div key={w.id} className="rounded-2xl border border-orange-500/15 bg-zinc-900 p-5">
+<div className="flex items-start justify-between gap-3">
+<div className="min-w-0">
+<p className="font-bold">
+{w.scope === "entire" ? "Entire Sport" : (w.resourceUnit?.name || "Resource")}
+</p>
+<p className="text-xs text-zinc-500 mt-1">
+{new Date(w.startAt).toLocaleString()} → {new Date(w.endAt).toLocaleString()}
+</p>
+<p className="text-sm text-zinc-400 mt-2">
+{w.message || "No maintenance message."}
+</p>
+</div>
+<button
+type="button"
+onClick={()=>void handleEndMaintenanceWindow(w.id)}
+className="shrink-0 h-9 px-4 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition text-xs font-semibold"
+>
+End now
+</button>
+</div>
+</div>
+))}
+
+</div>
 
 </motion.div>
 
 </motion.div>
 
-)
-</motion.div>
 )}
 
 </AnimatePresence>
@@ -12319,7 +9488,7 @@ animate-pulse
 </div>
 
 </div>
-)};
+)}
 
     </main>
 

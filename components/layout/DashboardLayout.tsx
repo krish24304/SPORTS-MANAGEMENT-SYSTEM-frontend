@@ -103,7 +103,7 @@ export default function DashboardLayout({
         <section className="px-5 py-7 md:px-8 md:py-8 lg:px-10">
           <div className="mx-auto w-full max-w-[1500px]">
             {/* PAGE TITLE */}
-            <div className="mb-8">
+            <div className={title ? "mb-8" : "hidden"}>
               <motion.h1
                 initial={{
                   opacity: 0,

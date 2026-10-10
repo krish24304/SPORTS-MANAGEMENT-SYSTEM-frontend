@@ -1,7 +1,11 @@
 "use client";
 
+import { authFetch } from "@/lib/auth";
+
 import { useEffect, useState } from "react";
 import Navbar from "@/components/layout/Navbar";
+import AnonymousRequestsModal from "@/components/suggestions/AnonymousRequestsModal";
+import { useSuggestionUnread } from "@/lib/suggestions";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faGear } from "@fortawesome/free-solid-svg-icons";
 import ResourceManagerPopup from "@/components/ResourceManagerPopup";
@@ -30,6 +34,14 @@ type ResourceItem = { id: string; name: string };
 export default function AdminSportsPage() {
   const [sports, setSports] = useState<any[]>([]);
   const [bookings, setBookings] = useState([]);
+  const [dashStats, setDashStats] = useState<{
+    sports: number;
+    activeSports: number;
+    staff: number;
+    students: number;
+    resources: number;
+    bookings: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCreateSport, setShowCreateSport] =
   useState(false);
@@ -95,6 +107,8 @@ const [newResourceName, setNewResourceName] =
   useState(false);
 
   const [search, setSearch] = useState("");
+  const [showRequests, setShowRequests] = useState(false);
+  const unreadRequests = useSuggestionUnread();
   const [showManageSport, setShowManageSport] = useState(false);
 
 const [selectedSport, setSelectedSport] = useState<any>(null);
@@ -136,7 +150,13 @@ const [reservationStartDate,setReservationStartDate]=useState("");
 const [reservationEndDate,setReservationEndDate]=useState("");
 const [resourceToastMessage,setResourceToastMessage]=useState("");
 const [showMaintenancePopup, setShowMaintenancePopup] = useState(false);
-const [maintenanceEnabled,setMaintenanceEnabled]=useState(false);
+const [maintenanceScope, setMaintenanceScope] = useState<"resources" | "entire">("resources");
+const [maintenanceSaving, setMaintenanceSaving] = useState(false);
+const [maintenanceWindowStart, setMaintenanceWindowStart] = useState("");
+const [maintenanceWindowEnd, setMaintenanceWindowEnd] = useState("");
+const [activeMaintenanceWindows, setActiveMaintenanceWindows] = useState<any[]>([]);
+const [showActiveMaintenanceList, setShowActiveMaintenanceList] = useState(false);
+const [maintenanceConflict, setMaintenanceConflict] = useState<{ conflicts: any[] } | null>(null);
 
 const [maintenanceMessage,setMaintenanceMessage]=useState("");
 
@@ -162,7 +182,7 @@ const [maxTeamSize,setMaxTeamSize]=useState(10);
 const [advanceBookingDays,setAdvanceBookingDays]=useState(7);  
 const fetchSports = async () => {
     try {
-      const response = await fetch(
+      const response = await authFetch(
         "http://localhost:5000/sports"
       );
 
@@ -197,7 +217,7 @@ const fetchSports = async () => {
 
   try {
 
-    const response = await fetch(
+    const response = await authFetch(
       "http://localhost:5000/sports",
       {
         method: "POST",
@@ -258,6 +278,10 @@ const resetCreateSport = () => {
 
   useEffect(() => {
     fetchSports();
+    authFetch("http://localhost:5000/dashboard/stats")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setDashStats(data))
+      .catch(() => setDashStats(null));
   }, []);
 
 const deleteSport = async (id: string) => {
@@ -270,7 +294,7 @@ const deleteSport = async (id: string) => {
 
   try {
 
-    const response = await fetch(
+    const response = await authFetch(
   `http://localhost:5000/sports/${id}`,
   {
     method: "DELETE",
@@ -292,7 +316,7 @@ const updateSport = async(updatedSport:any)=>{
 
 try{
 
-await fetch(
+const response = await authFetch(
 
 `http://localhost:5000/sports/${updatedSport.id}`,
 
@@ -312,9 +336,18 @@ body:JSON.stringify(updatedSport)
 
 );
 
+if (!response.ok) {
+  const data = await response.json().catch(() => null);
+  return { ok: false as const, message: data?.message || "Failed to update sport" };
+}
+
+const saved = await response.json();
+return { ok: true as const, sport: saved };
+
 }catch(err){
 
 console.log(err);
+return { ok: false as const, message: "Could not reach the server" };
 
 }
 
@@ -397,24 +430,26 @@ const handleDeleteSelectedResource = async () => {
   setTimeout(() => setShowResourceToast(false), 2500);
 };
 
-const handleSaveSlotSettings = () => {
+const handleSaveSlotSettings = async () => {
 
 if (!selectedSport) return;
 
-const updatedSport = {
+const result = await updateSport({
+  ...selectedSport,
+  hasSlotSystem: slotEnabled,
+  slotDurationMinutes: slotDuration,
+  slotCapacity: slotCapacityValue,
+});
 
-...selectedSport,
+if (!result || result.ok === false) {
+  setResourceToastMessage(result?.message || "Failed to save slot settings");
+  setShowResourceToast(true);
+  setTimeout(() => setShowResourceToast(false), 2500);
+  return;
+}
 
-hasSlotSystem: slotEnabled,
-
-slotDurationMinutes: slotDuration,
-
-slotCapacity: slotCapacityValue,
-
-};
-
+const updatedSport = result.sport;
 setSelectedSport(updatedSport);
-
 setSports((prev)=>
 
 prev.map((sport)=>
@@ -430,19 +465,29 @@ sport.id===selectedSport.id
 );
 
 setShowSlotPopup(false);
+setResourceToastMessage("Slot settings saved");
+setShowResourceToast(true);
+setTimeout(() => setShowResourceToast(false), 2500);
 
 };
 
-const handleSaveSportInfo = () => {
+const handleSaveSportInfo = async () => {
   if (!selectedSport) return;
 
-  const updatedSport = {
+  const result = await updateSport({
     ...selectedSport,
     name: editedSportName.trim() || selectedSport.name,
     resourceType: editedResourceType.trim() || selectedSport.resourceType || "Court",
-    active: editedStatus,
-  };
+  });
 
+  if (!result || result.ok === false) {
+    setResourceToastMessage(result?.message || "Failed to update sport");
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 2500);
+    return;
+  }
+
+  const updatedSport = result.sport;
   setSelectedSport(updatedSport);
   setSports((prev) =>
     prev.map((sport) => (sport.id === selectedSport.id ? updatedSport : sport))
@@ -486,17 +531,76 @@ return "📍";
 };
 const handleCreateReservation = async () => {
 
-  // TODO: Save reservation to Firebase later.
+  if (!selectedSport?.id) return;
 
-  console.log({
-    team: reservationTeamName,
-    purpose: reservationPurpose,
-    startDate: reservationStartDate,
-    endDate: reservationEndDate,
-    startTime: reservationStartTime,
-    duration: reservationDuration,
-    resources: selectedReservationResources,
-  });
+  const team = reservationTeamName.trim();
+  const startDate = reservationStartDate;
+  const endDate = reservationEndDate || reservationStartDate;
+
+  const announce = (message: string) => {
+    setResourceToastMessage(message);
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 3000);
+  };
+
+  if (!team) return announce("Please enter a team name");
+  if (!startDate) return announce("Please choose a start date");
+  if (!reservationStartTime) return announce("Please choose a slot start time");
+  if (!reservationDuration || reservationDuration <= 0) return announce("Duration must be a positive number of minutes");
+  if (selectedReservationResources.length === 0) return announce("Select at least one resource");
+  if (new Date(endDate) < new Date(startDate)) return announce("End date cannot be before the start date");
+
+  // One reservation per calendar day across the chosen date range, same
+  // start time and duration every day (daily recurring team practice).
+  const days: string[] = [];
+  for (
+    let cursor = new Date(startDate);
+    cursor <= new Date(endDate);
+    cursor.setDate(cursor.getDate() + 1)
+  ) {
+    days.push(new Date(cursor).toISOString().slice(0, 10));
+  }
+
+  let created = 0;
+  const failures: string[] = [];
+
+  for (const day of days) {
+    try {
+      const response = await authFetch("http://localhost:5000/team-reservations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          teamName: team,
+          purpose: reservationPurpose,
+          sportId: selectedSport.id,
+          startDateTime: new Date(`${day}T${reservationStartTime}`).toISOString(),
+          durationMinutes: reservationDuration,
+          resourceUnitIds: selectedReservationResources,
+        }),
+      });
+
+      if (response.ok) {
+        created += 1;
+      } else {
+        const data = await response.json().catch(() => null);
+        failures.push(`${day}: ${data?.message || "failed"}`);
+      }
+    } catch (err) {
+      console.error("CREATE TEAM RESERVATION ERROR:", err);
+      failures.push(`${day}: could not reach the server`);
+    }
+  }
+
+  if (created > 0) {
+    announce(
+      failures.length === 0
+        ? `Reserved ${created} day(s) for ${team}`
+        : `Reserved ${created} of ${days.length} day(s); ${failures[0]}`
+    );
+  } else {
+    announce(failures[0] || "Failed to create reservation");
+    return;
+  }
 
   // Close popup
   setShowReservationPopup(false);
@@ -511,6 +615,146 @@ const handleCreateReservation = async () => {
   setSelectedReservationResources([]);
 
 };
+
+const refreshSportDetail = async (sportId: number) => {
+  try {
+    const response = await authFetch("http://localhost:5000/sports");
+    const data = await response.json();
+    if (Array.isArray(data)) {
+      setSports(data);
+      const updated = data.find((s: any) => s.id === sportId);
+      if (updated) setSelectedSport(updated);
+    }
+  } catch (err) {
+    console.error("REFRESH SPORT DETAIL ERROR:", err);
+  }
+};
+
+const fetchMaintenanceWindows = async (sportId: number) => {
+  try {
+    const response = await authFetch(`http://localhost:5000/sports/${sportId}/maintenance-windows`);
+    if (!response.ok) {
+      setActiveMaintenanceWindows([]);
+      return;
+    }
+    const data = await response.json();
+    setActiveMaintenanceWindows(Array.isArray(data) ? data : []);
+  } catch (err) {
+    console.error("FETCH MAINTENANCE WINDOWS ERROR:", err);
+    setActiveMaintenanceWindows([]);
+  }
+};
+
+const handleSaveMaintenance = async (force: boolean) => {
+  if (!selectedSport?.id) return;
+
+  const announce = (message: string) => {
+    setResourceToastMessage(message);
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 3000);
+  };
+
+  if (maintenanceScope === "resources" && selectedMaintenanceResources.length === 0) {
+    announce("Select at least one resource");
+    return;
+  }
+
+  if (!maintenanceWindowStart || !maintenanceWindowEnd) {
+    announce("Choose a start and end date/time");
+    return;
+  }
+
+  const startAt = new Date(maintenanceWindowStart);
+  const endAt = new Date(maintenanceWindowEnd);
+
+  if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+    announce("Invalid start or end date/time");
+    return;
+  }
+  if (endAt <= startAt) {
+    announce("End must be after start");
+    return;
+  }
+
+  setMaintenanceSaving(true);
+
+  try {
+    const response = await authFetch(`http://localhost:5000/sports/${selectedSport.id}/maintenance-windows`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scope: maintenanceScope === "entire" ? "entire" : "resource",
+        resourceUnitIds: maintenanceScope === "resources" ? selectedMaintenanceResources : undefined,
+        startAt: startAt.toISOString(),
+        endAt: endAt.toISOString(),
+        message: maintenanceMessage.trim() || null,
+        force,
+      }),
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (response.status === 409 && data?.conflictType === "reservation") {
+      setMaintenanceConflict({ conflicts: data.conflicts || [] });
+      return;
+    }
+
+    if (!response.ok) {
+      announce(data?.message || "Failed to schedule maintenance");
+      return;
+    }
+
+    await refreshSportDetail(selectedSport.id);
+    await fetchMaintenanceWindows(selectedSport.id);
+
+    setMaintenanceConflict(null);
+    setShowMaintenancePopup(false);
+    setSelectedMaintenanceResources([]);
+    setMaintenanceMessage("");
+    setMaintenanceWindowStart("");
+    setMaintenanceWindowEnd("");
+
+    announce(
+      data?.cancelledReservations > 0
+        ? `Maintenance scheduled; ${data.cancelledReservations} reservation(s) cancelled`
+        : "Maintenance scheduled"
+    );
+  } catch (err) {
+    console.error("SAVE MAINTENANCE ERROR:", err);
+    announce("Could not reach the server");
+  } finally {
+    setMaintenanceSaving(false);
+  }
+};
+
+const handleEndMaintenanceWindow = async (windowId: number) => {
+  if (!selectedSport?.id) return;
+
+  try {
+    const response = await authFetch(`http://localhost:5000/sports/${selectedSport.id}/maintenance-windows/${windowId}/end`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      setResourceToastMessage("Failed to end maintenance");
+      setShowResourceToast(true);
+      setTimeout(() => setShowResourceToast(false), 2500);
+      return;
+    }
+
+    await refreshSportDetail(selectedSport.id);
+    await fetchMaintenanceWindows(selectedSport.id);
+    setResourceToastMessage("Maintenance ended");
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 2500);
+  } catch (err) {
+    console.error("END MAINTENANCE WINDOW ERROR:", err);
+    setResourceToastMessage("Could not reach the server");
+    setShowResourceToast(true);
+    setTimeout(() => setShowResourceToast(false), 2500);
+  }
+};
+
   return (
     <main className="min-h-screen bg-black text-white">
       <Navbar />
@@ -556,20 +800,24 @@ const handleCreateReservation = async () => {
             <div className="mt-4 flex items-end gap-3">
 
   <div className="mt-4 flex items-center gap-2">
-  <span className="text-emerald-400 font-bold text-4xl">
-    {sports.length}
+  <span className="text-emerald-400 font-bold text-4xl" title="Sports not in maintenance">
+    {dashStats ? dashStats.activeSports : "—"}
   </span>
 
   <span className="text-zinc-500">
     /
   </span>
 
-  <span className="pb-1 text-sm font-semibold text-zinc-500 uppercase text 3xl">
-    Total Sports
+  <span className="text-zinc-300 font-bold text-2xl">
+    {dashStats ? dashStats.sports : sports.length}
   </span>
 
 </div>
 </div>
+
+            <p className="text-zinc-400 text-sm mt-1">
+              Active / Total Sports
+            </p>
 
           </div>
 
@@ -579,7 +827,7 @@ const handleCreateReservation = async () => {
               Staff
             </h3>
             <p className="text-violet-400 font-bold text-3xl mt-3">
-              {sports.reduce((sum, sport) => sum + (sport.totalStaff || 0), 0)}
+              {dashStats ? dashStats.staff : "—"}
             </p>
             <p className="text-zinc-400">
               Active
@@ -592,7 +840,7 @@ const handleCreateReservation = async () => {
               Students
             </h3>
             <p className="text-3xl text-orange-400 font-bold mt-3">
-              {sports.reduce((sum, sport) => sum + (sport.totalStudents || 0), 0)}
+              {dashStats ? dashStats.students : "—"}
             </p>
             <p className="text-zinc-400">
               Registered
@@ -605,11 +853,7 @@ const handleCreateReservation = async () => {
               Assets
             </h3>
             <p className="text-3xl text-blue-400 font-bold mt-3">
-              {sports.reduce(
-  (sum, sport) =>
-    sum + (sport.resourceUnits?.length || 0),
-  0
-)}
+              {dashStats ? dashStats.resources : "—"}
             </p>
             <p className="text-zinc-400 font-bold">
               Resources
@@ -622,7 +866,7 @@ const handleCreateReservation = async () => {
               Activity
             </h3>
             <p className="text-3xl text-pink-400 font-bold mt-3">
-              {sports.reduce((sum, sport) => sum + (sport.totalBookings || 0), 0)}
+              {dashStats ? dashStats.bookings : "—"}
             </p>
             <p className="text-zinc-400">
               Bookings
@@ -662,13 +906,22 @@ const handleCreateReservation = async () => {
     </p>
   </button>
 
-  <button className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-6 hover:border-purple-500 transition-all hover:-translate-y-1">
+  <button
+    onClick={() => setShowRequests(true)}
+    className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-6 hover:border-purple-500 transition-all hover:-translate-y-1"
+  >
     <div className="text-4xl mb-4">🔔</div>
-    <h3 className="font-black text-xl">
-      Requests (0)
+    <h3 className="font-black text-xl flex items-center justify-center gap-2">
+      Requests ({unreadRequests})
+      {unreadRequests > 0 && (
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-purple-400 opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-purple-400" />
+        </span>
+      )}
     </h3>
     <p className="text-zinc-500 text-sm mt-2">
-      Pending approvals
+      {unreadRequests > 0 ? `${unreadRequests} unread` : "All caught up"}
     </p>
   </button>
 
@@ -2620,34 +2873,6 @@ animate-[fadeUp_.25s_ease]
 "
 >
 
-<button
-onClick={async()=>{
-setShowManageSport(false);
-setSelectedSport(null);
-}}
-className="
-absolute
-top-6
-right-6
-
-w-12
-h-12
-
-rounded-xl
-
-border
-border-zinc-800
-
-hover:border-red-500
-
-transition
-
-text-2xl
-"
->
-✕
-</button>
-
 <div className="p-10">
 
 {/* Back */}
@@ -2811,10 +3036,17 @@ font-black leading-none font-black tracking-tight">
 </h1>
 
 <div className="flex items-center gap-4 mt-3 text-[17px]">
+{selectedSport.maintenance ? (
+<span className="flex items-center gap-2 text-orange-400 text-sm font-semibold">
+<span className="w-2 h-2 rounded-full bg-orange-400"></span>
+Maintenance
+</span>
+) : (
 <span className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
 <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
 Active
 </span>
+)}
 
 <span className="text-zinc-500">
 <span className="text-zinc-500">
@@ -2888,10 +3120,6 @@ shadow-[0_0_30px_rgba(59,130,246,.15)]
 Resources
 </p>
 
-<p className="text-zinc-500">
-Total {selectedSport.resourceType || "Court"}s
-</p>
-
 </div>
 
 <div
@@ -2914,10 +3142,6 @@ shadow-[0_0_30px_rgba(16,185,129,.15)]
 
 <p className="uppercase text-sm tracking-wider mt-3">
 Gears
-</p>
-
-<p className="text-zinc-500">
-Total Gears
 </p>
 
 </div>
@@ -2950,12 +3174,6 @@ Slot System
 
 </p>
 
-<p className="text-zinc-500">
-
-Dynamic Booking
-
-</p>
-
 </div>
 
 <div
@@ -2975,22 +3193,12 @@ shadow-[0_0_30px_rgba(249,115,22,.15)]
 
 <p className="text-4xl font-black text-orange-400">
 
-{maintenanceEnabled ? "ON" : "OFF"}
+{selectedSport.maintenance ? "ON" : "OFF"}
 
 </p>
 <p className="uppercase text-sm tracking-wider mt-3">
 
 Maintenance
-
-</p>
-
-<p className="text-zinc-500">
-
-{maintenanceEnabled
-
-? "Maintenance Active"
-
-: "No Active"}
 
 </p>
 
@@ -3055,7 +3263,16 @@ Capacity:
 </button>
 
 <button
-onClick={() => setShowMaintenancePopup(true)}
+onClick={() => {
+  setMaintenanceMessage("");
+  setMaintenanceWindowStart("");
+  setMaintenanceWindowEnd("");
+  setSelectedMaintenanceResources([]);
+  setMaintenanceScope("resources");
+  setMaintenanceConflict(null);
+  setShowMaintenancePopup(true);
+  void fetchMaintenanceWindows(selectedSport.id);
+}}
 className="
 rounded-[24px]
 bg-zinc-900
@@ -3920,7 +4137,7 @@ Reserve Now
 
 </motion.div>
 
-)};
+)}
 
 
 
@@ -4280,6 +4497,7 @@ Save Changes
 {showMaintenancePopup && (
 
 <motion.div
+key="maintenance-popup"
 initial={{opacity:0}}
 animate={{opacity:1}}
 exit={{opacity:0}}
@@ -4292,46 +4510,31 @@ backdrop-blur-xl
 flex
 items-center
 justify-center
+p-6
 "
 >
 
 <motion.div
-initial={{
-scale:.95,
-y:20,
-opacity:0
-}}
-animate={{
-scale:1,
-y:0,
-opacity:1
-}}
-exit={{
-scale:.95,
-y:20,
-opacity:0
-}}
-transition={{
-type:"spring",
-stiffness:180,
-damping:18
-}}
+initial={{ scale:.95, y:20, opacity:0 }}
+animate={{ scale:1, y:0, opacity:1 }}
+exit={{ scale:.95, y:20, opacity:0 }}
+transition={{ type:"spring", stiffness:180, damping:18 }}
+onClick={(e)=>e.stopPropagation()}
 className="
-w-[1080px]
-h-[760px]
+w-[760px]
+max-h-[88vh]
 rounded-[36px]
 border
 border-orange-500/20
 bg-zinc-950
 shadow-[0_0_90px_rgba(249,115,22,.18)]
-overflow-hidden
-flex
+overflow-y-auto
 "
 >
 
-{/* LEFT */}
+<div className="p-8">
 
-<div className="flex-1 p-8 overflow-y-auto">
+{/* Header */}
 
 <div className="flex items-start justify-between">
 
@@ -4375,25 +4578,27 @@ Manage maintenance for {selectedSport?.name}
 
 </div>
 
-<div className="flex items-center gap-4">
+<div className="flex items-center gap-3">
 
-<div
+<button
+type="button"
+onClick={()=>setShowActiveMaintenanceList(true)}
 className="
-px-4
-py-2
-rounded-full
-bg-orange-500/10
+h-12
+px-5
+rounded-2xl
 border
-border-orange-500/20
-text-orange-400
+border-orange-500/30
+bg-orange-500/5
+text-orange-300
 text-sm
 font-semibold
+hover:bg-orange-500/10
+transition
 "
 >
-
-● Scheduled
-
-</div>
+Active Maintenance ({activeMaintenanceWindows.length})
+</button>
 
 <button
 
@@ -4418,9 +4623,7 @@ transition
 
 {/* Maintenance Scope */}
 
-<div>
-
-<div className="flex items-center justify-between">
+<div className="mt-8">
 
 <div>
 
@@ -4431,29 +4634,6 @@ Maintenance Scope
 <p className="text-zinc-500 text-sm mt-1">
 Choose where maintenance should apply.
 </p>
-
-</div>
-
-<select
-className="
-h-12
-rounded-2xl
-bg-zinc-900
-border
-border-zinc-800
-px-4
-outline-none
-text-orange-300
-"
->
-
-<option>Running</option>
-
-<option>Scheduled</option>
-
-<option>Completed</option>
-
-</select>
 
 </div>
 
@@ -4476,15 +4656,19 @@ whileHover={{scale:1.02}}
 
 whileTap={{scale:.97}}
 
-className="
+onClick={()=>setMaintenanceScope("resources")}
+
+className={`
 flex-1
 h-12
 rounded-xl
-bg-orange-500
-text-black
 font-bold
-shadow-[0_0_25px_rgba(249,115,22,.35)]
-"
+transition
+${maintenanceScope==="resources"
+  ? "bg-orange-500 text-black shadow-[0_0_25px_rgba(249,115,22,.35)]"
+  : "text-zinc-400 hover:text-white"
+}
+`}
 
 >
 
@@ -4492,77 +4676,47 @@ Specific Resources
 
 </motion.button>
 
-<button
+<motion.button
 
-className="
+whileHover={{scale:1.02}}
+
+whileTap={{scale:.97}}
+
+onClick={()=>setMaintenanceScope("entire")}
+
+className={`
 flex-1
 h-12
 rounded-xl
-text-zinc-400
-hover:text-white
+font-bold
 transition
-"
+${maintenanceScope==="entire"
+  ? "bg-orange-500 text-black shadow-[0_0_25px_rgba(249,115,22,.35)]"
+  : "text-zinc-400 hover:text-white"
+}
+`}
 
 >
 
 Entire Sport
 
-</button>
+</motion.button>
 
 </div>
 
 </div>
 
-{/* Search */}
+{maintenanceScope === "resources" && (
 
 <div className="mt-8">
 
-<div className="flex justify-between items-center">
-
 <p className="font-bold text-xl">
-
 Select Resources
-
 </p>
 
 <div
 className="
-w-[280px]
-h-12
-rounded-2xl
-bg-zinc-900
-border
-border-zinc-800
-flex
-items-center
-px-4
-"
->
-
-<input
-
-placeholder="Search resources..."
-
-className="
-flex-1
-bg-transparent
-outline-none
-text-sm
-"
-
-/>
-
-<MagnifyingGlassIcon
-className="w-5 h-5 text-zinc-500"
-/>
-
-</div>
-
-</div>
-
-<div
-className="
-mt-6
+mt-4
 space-y-3
 max-h-[260px]
 overflow-y-auto
@@ -4570,53 +4724,20 @@ pr-2
 "
 >
 
-{selectedSport?.resourceUnits?.map((resource:any)=>{
+{(selectedSport?.resourceUnits || []).map((resource:any)=>{
 
-const checked =
-selectedMaintenanceResources.includes(resource.id);
+const alreadyInMaintenance = resource.status === "maintenance";
+const checked = selectedMaintenanceResources.includes(resource.id);
 
 return(
 
-<motion.div
+<div
 
 key={resource.id}
 
-layout
-
-whileHover={{
-y:-3,
-scale:1.01
-}}
-
-whileTap={{
-scale:.98
-}}
-
-className={`
-rounded-2xl
-border
-cursor-pointer
-transition-all
-duration-300
-p-5
-flex
-justify-between
-items-center
-
-${
-checked
-?
-
-"border-orange-500 bg-orange-500/10 shadow-[0_0_20px_rgba(249,115,22,.20)]"
-
-:
-
-"border-zinc-800 bg-zinc-900 hover:border-orange-500/30"
-
-}
-`}
-
 onClick={()=>{
+
+if (alreadyInMaintenance) return;
 
 if(checked){
 
@@ -4643,6 +4764,29 @@ resource.id
 }
 
 }}
+
+className={`
+rounded-2xl
+border
+p-5
+flex
+justify-between
+items-center
+transition-all
+duration-300
+
+${
+alreadyInMaintenance
+?
+"cursor-not-allowed border-zinc-800 bg-zinc-900/40 opacity-50"
+:
+checked
+?
+"cursor-pointer border-orange-500 bg-orange-500/10 shadow-[0_0_20px_rgba(249,115,22,.20)]"
+:
+"cursor-pointer border-zinc-800 bg-zinc-900 hover:border-orange-500/30"
+}
+`}
 
 >
 
@@ -4676,7 +4820,7 @@ className="w-6 h-6 text-orange-400"
 
 <p className="text-xs text-zinc-500">
 
-{resource.type}
+{alreadyInMaintenance ? "Already in maintenance" : resource.type}
 
 </p>
 
@@ -4684,8 +4828,7 @@ className="w-6 h-6 text-orange-400"
 
 </div>
 
-<div>
-
+{!alreadyInMaintenance && (
 <div
 className={`
 w-6
@@ -4706,18 +4849,23 @@ ${checked
 }
 `}
 />
+)}
 
 </div>
-
-</motion.div>
 
 );
 
 })}
 
+{(selectedSport?.resourceUnits || []).length === 0 && (
+<p className="text-sm text-zinc-500">This sport has no resources yet.</p>
+)}
+
 </div>
 
 </div>
+
+)}
 
 {/* Schedule */}
 
@@ -4731,7 +4879,7 @@ Maintenance Schedule
 
 <p className="text-zinc-500 text-sm mt-1">
 
-Choose when maintenance will run.
+Choose when maintenance starts and ends.
 
 </p>
 
@@ -4755,6 +4903,8 @@ Start
 
 <input
 type="datetime-local"
+value={maintenanceWindowStart}
+onChange={(e)=>setMaintenanceWindowStart(e.target.value)}
 className="
 mt-3
 w-full
@@ -4783,6 +4933,8 @@ End
 
 <input
 type="datetime-local"
+value={maintenanceWindowEnd}
+onChange={(e)=>setMaintenanceWindowEnd(e.target.value)}
 className="
 mt-3
 w-full
@@ -4837,7 +4989,7 @@ outline-none
 
         className="
         mt-4
-        h-[140px]
+        h-[120px]
         w-full
         rounded-3xl
         border
@@ -4856,6 +5008,44 @@ outline-none
     />
 
 </div>
+
+{maintenanceConflict && (
+
+<div className="mt-6 rounded-2xl border border-red-500/30 bg-red-500/10 p-5">
+
+<p className="font-bold text-red-300">
+This will cancel {maintenanceConflict.conflicts.length} existing reservation(s)
+</p>
+
+<div className="mt-3 space-y-2 max-h-[140px] overflow-y-auto pr-1">
+{maintenanceConflict.conflicts.map((c:any)=>(
+<p key={c.reservationId} className="text-sm text-red-200">
+{c.teamName} on {c.resourceName} · {new Date(c.startDateTime).toLocaleString()} - {new Date(c.endDateTime).toLocaleString()}
+</p>
+))}
+</div>
+
+<div className="mt-4 flex gap-3">
+<button
+type="button"
+onClick={()=>setMaintenanceConflict(null)}
+className="h-11 px-5 rounded-xl border border-zinc-700 hover:border-zinc-500 transition"
+>
+Cancel
+</button>
+<button
+type="button"
+disabled={maintenanceSaving}
+onClick={()=>void handleSaveMaintenance(true)}
+className="h-11 px-5 rounded-xl bg-red-500 text-black font-bold hover:bg-red-400 transition disabled:opacity-60"
+>
+Cancel reservation(s) and continue
+</button>
+</div>
+
+</div>
+
+)}
 
 {/* Footer */}
 
@@ -4903,6 +5093,10 @@ outline-none
                 scale:.97
             }}
 
+            disabled={maintenanceSaving}
+
+            onClick={() => void handleSaveMaintenance(false)}
+
             className="
             flex-1
             h-14
@@ -4914,354 +5108,121 @@ outline-none
             font-bold
             text-black
             shadow-[0_0_30px_rgba(249,115,22,.35)]
+            disabled:opacity-60
             "
 
         >
 
-            Save Maintenance
-
-        </motion.button>
-
-    </div>
-
-    {/* Small Schedule Button */}
-
-    <div className="flex justify-center mt-7">
-
-        <motion.button
-
-            whileHover={{
-                scale:1.04,
-                y:-2
-            }}
-
-            whileTap={{
-                scale:.97
-            }}
-
-            className="
-            px-7
-            h-12
-            rounded-full
-            border
-            border-orange-500/30
-            bg-orange-500/5
-            text-orange-300
-            font-semibold
-            hover:bg-orange-500/10
-            transition-all
-            shadow-[0_0_18px_rgba(249,115,22,.10)]
-            "
-
-        >
-
-            ＋ Schedule Another Maintenance
+            {maintenanceSaving ? "Scheduling..." : "Schedule Maintenance"}
 
         </motion.button>
 
     </div>
 
 </div>
-
-</div>
-
-{/* RIGHT PANEL */}
-
-<motion.div
-
-initial={{ x:40, opacity:0 }}
-
-animate={{ x:0, opacity:1 }}
-
-transition={{ delay:.2 }}
-
-className="
-w-[360px]
-rounded-[34px]
-border
-border-orange-500/15
-bg-gradient-to-b
-from-zinc-950
-to-black
-p-6
-shadow-[0_0_40px_rgba(249,115,22,.10)]
-"
-
->
-
-<div className="flex justify-between items-center">
-
-<div>
-
-<h2 className="text-2xl font-black">
-
-Active Maintenance
-
-</h2>
-
-<p className="text-zinc-500 text-sm mt-1">
-
-Currently scheduled maintenance
-
-</p>
-
-</div>
-
-<div
-className="
-w-9
-h-9
-rounded-full
-bg-orange-500/10
-flex
-items-center
-justify-center
-text-orange-400
-font-bold
-"
->
-
-{selectedSport?.resourceUnits?.filter(
-(r:any)=>r.status==="maintenance"
-).length}
-
-</div>
-
-</div>
-
-<div
-className="
-mt-6
-space-y-5
-max-h-[610px]
-overflow-y-auto
-pr-2
-"
->
-
-{selectedSport?.resourceUnits
-?.filter((r:any)=>r.status==="maintenance")
-.map((resource:any,index:number)=>(
-
-<motion.div
-
-key={resource.id}
-
-initial={{
-opacity:0,
-y:25
-}}
-
-animate={{
-opacity:1,
-y:0
-}}
-
-transition={{
-delay:index*.08
-}}
-
-whileHover={{
-y:-4
-}}
-
-className="
-rounded-3xl
-border
-border-orange-500/15
-bg-zinc-900
-p-5
-"
-
->
-
-<div className="flex justify-between items-center">
-
-<span
-className="
-rounded-full
-bg-orange-500/10
-px-4
-py-1
-text-xs
-font-bold
-text-orange-300
-"
->
-
-Running
-
-</span>
-
-<span
-className="
-rounded-full
-bg-emerald-500/10
-px-3
-py-1
-text-xs
-font-semibold
-text-emerald-300
-"
->
-
-Live
-
-</span>
-
-</div>
-
-<div className="mt-5">
-
-<h3 className="font-bold text-lg">
-
-{resource.name}
-
-</h3>
-
-<p className="text-zinc-500 text-sm mt-2">
-
-{resource.maintenanceMessage ||
-
-"No maintenance message."
-
-}
-
-</p>
-
-</div>
-
-<div className="mt-6 flex gap-3">
-
-<motion.button
-
-whileHover={{
-scale:1.05
-}}
-
-whileTap={{
-scale:.95
-}}
-
-className="
-flex-1
-h-11
-rounded-xl
-border
-border-zinc-700
-hover:border-orange-500
-transition
-"
-
->
-
-Edit
-
-</motion.button>
-
-<motion.button
-
-whileHover={{
-scale:1.05
-}}
-
-whileTap={{
-scale:.95
-}}
-
-className="
-flex-1
-h-11
-rounded-xl
-border
-border-red-500/30
-text-red-400
-hover:bg-red-500/10
-transition
-"
-
->
-
-Delete
-
-</motion.button>
 
 </div>
 
 </motion.div>
 
-))}
-
-{selectedSport?.resourceUnits?.filter(
-(r:any)=>r.status==="maintenance"
-).length===0 && (
-
-<div
-className="
-rounded-3xl
-border
-border-zinc-800
-bg-zinc-900
-p-10
-text-center
-"
->
-
-<WrenchScrewdriverIcon
-className="
-mx-auto
-w-12
-h-12
-text-zinc-600
-"
-/>
-
-<p className="mt-5 text-zinc-500">
-
-No active maintenance.
-
-</p>
-
-</div>
+</motion.div>
 
 )}
 
-</div>
+{showActiveMaintenanceList && (
 
-<motion.button
-
-whileHover={{
-scale:1.02
-}}
-
-whileTap={{
-scale:.98
-}}
-
+<motion.div
+key="active-maintenance-list"
+initial={{opacity:0}}
+animate={{opacity:1}}
+exit={{opacity:0}}
+onClick={()=>setShowActiveMaintenanceList(false)}
 className="
-mt-6
-w-full
-h-14
-rounded-2xl
-border
-border-zinc-700
-bg-zinc-900
-hover:border-orange-500
-transition
+fixed
+inset-0
+z-[710]
+bg-black/80
+backdrop-blur-xl
+flex
+items-center
+justify-center
+p-6
 "
-
 >
 
-View All Notices →
+<motion.div
+initial={{ scale:.95, y:20, opacity:0 }}
+animate={{ scale:1, y:0, opacity:1 }}
+exit={{ scale:.95, y:20, opacity:0 }}
+onClick={(e)=>e.stopPropagation()}
+className="
+w-[560px]
+max-h-[80vh]
+overflow-y-auto
+rounded-[32px]
+border
+border-orange-500/20
+bg-zinc-950
+p-7
+shadow-[0_0_80px_rgba(249,115,22,.18)]
+"
+>
 
-</motion.button>
+<div className="flex items-center justify-between">
+<h2 className="text-2xl font-black">Active Maintenance</h2>
+<button
+type="button"
+onClick={()=>setShowActiveMaintenanceList(false)}
+className="text-3xl text-zinc-500 hover:text-red-400 transition"
+>
+✕
+</button>
+</div>
+
+<p className="text-zinc-500 text-sm mt-1">
+Currently scheduled maintenance for {selectedSport?.name}
+</p>
+
+<div className="mt-6 space-y-3">
+
+{activeMaintenanceWindows.length === 0 && (
+<div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-8 text-center">
+<WrenchScrewdriverIcon className="mx-auto w-10 h-10 text-zinc-600"/>
+<p className="mt-4 text-zinc-500">No active maintenance.</p>
+</div>
+)}
+
+{activeMaintenanceWindows.map((w:any)=>(
+<div key={w.id} className="rounded-2xl border border-orange-500/15 bg-zinc-900 p-5">
+<div className="flex items-start justify-between gap-3">
+<div className="min-w-0">
+<p className="font-bold">
+{w.scope === "entire" ? "Entire Sport" : (w.resourceUnit?.name || "Resource")}
+</p>
+<p className="text-xs text-zinc-500 mt-1">
+{new Date(w.startAt).toLocaleString()} → {new Date(w.endAt).toLocaleString()}
+</p>
+<p className="text-sm text-zinc-400 mt-2">
+{w.message || "No maintenance message."}
+</p>
+</div>
+<button
+type="button"
+onClick={()=>void handleEndMaintenanceWindow(w.id)}
+className="shrink-0 h-9 px-4 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition text-xs font-semibold"
+>
+End now
+</button>
+</div>
+</div>
+))}
+
+</div>
 
 </motion.div>
 
 </motion.div>
 
-)
-</motion.div>
 )}
 
 </AnimatePresence>
@@ -5538,8 +5499,9 @@ animate-pulse
 </div>
 
 </div>
-)};
+)}
 
+      <AnonymousRequestsModal open={showRequests} onClose={() => setShowRequests(false)} />
     </main>
 
 

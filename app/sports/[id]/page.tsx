@@ -11,22 +11,27 @@ import { useParams, useRouter } from "next/navigation";
 import {
   AnimatePresence,
   motion,
-  useMotionValue,
-  useTransform,
+  useReducedMotion,
 } from "framer-motion";
 import {
   ArrowLeft,
   ArrowRight,
+  Ban,
   Check,
+  CheckCircle2,
+  CircleAlert,
   ClipboardList,
   Clock3,
   Dumbbell,
+  LockKeyhole,
+  RefreshCw,
   Minus,
   Plus,
   ShieldAlert,
   X,
 } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
+import { getAuthHeaders } from "@/lib/auth";
 
 interface Slot {
   id: number;
@@ -244,6 +249,11 @@ glow: "rgba(57,255,20,0.18)",
 rgb: "57,255,20",
 };
 
+// Slot popup mode theme - independent of the page's accent, per the
+// Aqua Blue (ALL) / Deep Teal (AVAILABLE) spec for the rotating glass control.
+const GLASS_ALL = { solid: "#66B6D4", rgb: "102,182,212" };
+const GLASS_AVAILABLE = { solid: "#0F766E", rgb: "15,118,110" };
+
 function normalizeStatus(status: string): ResourceVisualStatus {
   const value = status.trim().toLowerCase().replace(/[\s-]+/g, "_");
 
@@ -319,6 +329,7 @@ export default function SportDetailsPage() {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [loading, setLoading] = useState(true);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsError, setSlotsError] = useState("");
   const [pageError, setPageError] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -381,13 +392,16 @@ export default function SportDetailsPage() {
 
       if (!response.ok) {
         setSlots([]);
+        setSlotsError("Unable to load slots right now.");
         return;
       }
 
       const data = await response.json();
       setSlots(Array.isArray(data) ? data : []);
+      setSlotsError("");
     } catch {
       setSlots([]);
+      setSlotsError("Unable to load slots right now.");
     } finally {
       setSlotsLoading(false);
     }
@@ -403,7 +417,7 @@ export default function SportDetailsPage() {
 
       const response = await fetch(
         `${API_BASE}/users/${user.id}/bookings`,
-        { cache: "no-store" }
+        { cache: "no-store", headers: { ...getAuthHeaders() } }
       );
 
       if (!response.ok) return;
@@ -417,7 +431,7 @@ export default function SportDetailsPage() {
       const active = data.find(
         (item: Booking) =>
           item.sport?.id === sportNumber &&
-          (item.status === "Active" || item.status === "Return Pending")
+          (item.status === "active" || item.status === "return_requested")
       );
 
       setActiveBooking(active || null);
@@ -600,7 +614,7 @@ export default function SportDetailsPage() {
 
         const response = await fetch(`${API_BASE}/bookings/slot`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             userId: user.id,
             sportId: sport.id,
@@ -626,7 +640,7 @@ export default function SportDetailsPage() {
 
         const response = await fetch(`${API_BASE}/bookings/gear`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             userId: user.id,
             sportId: sport.id,
@@ -658,42 +672,20 @@ export default function SportDetailsPage() {
       setErrorMessage(
         error instanceof Error ? error.message : "Booking failed. Please try again."
       );
+
+      // A failed booking is often caused by someone else taking the slot or
+      // resource first - refresh live availability so the UI doesn't keep
+      // showing stale state the user would just retry against.
+      try {
+        await Promise.all([fetchSport(), fetchSlots()]);
+      } catch {
+        // Ignore - the original error above is already shown to the user.
+      }
     } finally {
       setBookingLoading(false);
     }
   };
 
-  const cancelBooking = async (bookingId: number) => {
-    if (cancelLoading || bookingLoading) return;
-
-    try {
-      setCancelLoading(true);
-      setErrorMessage("");
-
-      const response = await fetch(`${API_BASE}/bookings/${bookingId}/cancel`, {
-        method: "POST",
-      });
-
-      const data = await safeJson(response);
-      if (!response.ok) {
-        throw new Error(
-          data?.message || data?.error || "Unable to cancel booking."
-        );
-      }
-
-      setSuccessMessage(data?.message || "Booking cancelled successfully.");
-      await Promise.all([fetchSport(), fetchSlots(), fetchBookings(sport?.id)]);
-      window.setTimeout(() => setSuccessMessage(""), 4000);
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "Cancellation failed. Please try again."
-      );
-    } finally {
-      setCancelLoading(false);
-    }
-  };
 
   if (loading && !sport) {
     return <LoadingState />;
@@ -1305,16 +1297,6 @@ style={{
                     </div>
                   </div>
 
-                  {activeBooking.status === "Active" && (
-                    <button
-                      type="button"
-                      disabled={cancelLoading || bookingLoading}
-                      onClick={() => cancelBooking(activeBooking.id)}
-                      className="rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-[10px] font-bold text-red-300 transition hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {cancelLoading ? "Cancelling…" : "Cancel"}
-                    </button>
-                  )}
                 </div>
               </div>
             )}
@@ -1322,42 +1304,6 @@ style={{
 
         </div>
 
-        {/* HISTORY — COMPACT, NOT THE MAIN EXPERIENCE */}
-        {bookingHistory.length > 0 && (
-          <motion.section
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.35 }}
-            className="mt-10"
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-zinc-700">
-                  Recent activity
-                </p>
-                <h3 className="mt-1 text-lg font-black text-zinc-300">Your bookings</h3>
-              </div>
-            </div>
-
-            <div className="grid gap-2 md:grid-cols-2">
-              {bookingHistory.slice(0, 4).map((booking) => (
-                <div
-                  key={booking.id}
-                  className="rounded-2xl border border-zinc-900 bg-[#071522] px-4 py-3"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-bold text-zinc-400">
-                      {booking.sport?.name || "Sports booking"}
-                    </p>
-                    <span className="text-[9px] font-black uppercase tracking-[0.14em] text-zinc-700">
-                      {booking.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </motion.section>
-        )}
       </div>
 
       {/* BOOKING SUMMARY POPUP */}
@@ -1397,13 +1343,14 @@ style={{
         teamReservedSlotCount={teamReservedSlotCount}
         mode={slotMode}
         loading={slotsLoading}
+        error={slotsError}
+        onRetry={fetchSlots}
         selectedSlotId={selectedSlot?.id ?? null}
         onModeChange={setSlotMode}
         onClose={() => setSlotPopupOpen(false)}
         onSelect={(slot) => {
           if (slotUnavailable(slot) || sport.maintenance) return;
           setSelectedSlot(slot);
-          setSlotPopupOpen(false);
         }}
       />
 
@@ -2542,6 +2489,18 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function slotDurationLabel(slot: Slot) {
+  const start = new Date(slot.startTime).getTime();
+  const end = new Date(slot.endTime).getTime();
+  const minutes = Math.round((end - start) / 60000);
+  if (!Number.isFinite(minutes) || minutes <= 0) return "";
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} hr${hours > 1 ? "s" : ""}`;
+  }
+  return `${minutes} min`;
+}
+
 function SlotPopup({
   open,
   sportName,
@@ -2552,6 +2511,8 @@ function SlotPopup({
   teamReservedSlotCount,
   mode,
   loading,
+  error,
+  onRetry,
   selectedSlotId,
   onModeChange,
   onClose,
@@ -2566,22 +2527,38 @@ function SlotPopup({
   teamReservedSlotCount: number;
   mode: "all" | "available";
   loading: boolean;
+  error?: string;
+  onRetry?: () => void;
   selectedSlotId: number | null;
   onModeChange: (mode: "all" | "available") => void;
   onClose: () => void;
   onSelect: (slot: Slot) => void;
 }) {
-  const dragX = useMotionValue(0);
-  const dragRotate = useTransform(dragX, [-90, 0, 90], [-90, 0, 90]);
-  const dragLiquid = useTransform(dragX, [-90, 0, 90], [0.05, 1, 0.05]);
   const [transitioning, setTransitioning] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
+
+  const modeColor = mode === "available" ? GLASS_AVAILABLE : GLASS_ALL;
+  const titleId = "slot-popup-title";
 
   useEffect(() => {
     if (!open) {
-      dragX.set(0);
       setTransitioning(false);
     }
-  }, [open, dragX]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
 
   const completeModeChange = (next: "all" | "available") => {
     if (transitioning || next === mode) return;
@@ -2589,10 +2566,12 @@ function SlotPopup({
 
     window.setTimeout(() => {
       onModeChange(next);
-      dragX.set(0);
       setTransitioning(false);
-    }, 470);
+    }, 320);
   };
+
+  const selectedSlotObject = slots.find((slot) => slot.id === selectedSlotId) ?? null;
+  const canContinue = !!selectedSlotObject && !slotUnavailable(selectedSlotObject);
 
   return (
     <AnimatePresence>
@@ -2607,42 +2586,44 @@ function SlotPopup({
           }}
         >
           <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
             initial={{ opacity: 0, y: 24, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 18, scale: 0.97 }}
-            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
             className="relative w-full max-w-xl overflow-hidden rounded-[2rem] border bg-[#081827] shadow-[0_35px_120px_rgba(0,0,0,0.6)]"
             style={{
-              borderColor: mode === "available" ? "rgba(52,211,153,0.22)" : accent.border,
-              boxShadow:
-                mode === "available"
-                  ? "0 35px 120px rgba(16,185,129,0.08)"
-                  : `0 35px 120px ${accent.glow}`,
+              borderColor: `rgba(${modeColor.rgb},0.30)`,
+              boxShadow: `0 35px 120px rgba(${modeColor.rgb},0.14)`,
             }}
           >
             {/* Theme wash */}
             <motion.div
               animate={{
-                opacity: mode === "available" ? 0.16 : 0.08,
-                background:
-                  mode === "available"
-                    ? "rgba(16,185,129,0.18)"
-                    : accent.glow,
+                opacity: mode === "available" ? 0.14 : 0.08,
+                background: `rgba(${modeColor.rgb},0.18)`,
               }}
               transition={{ duration: 0.7, ease: "easeInOut" }}
               className="pointer-events-none absolute inset-0"
             />
 
             <div className="relative p-5 md:p-6">
-              <div className="flex items-start justify-between gap-4">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, delay: prefersReducedMotion ? 0 : 0.05 }}
+                className="flex items-start justify-between gap-4"
+              >
                 <div>
                   <p
                     className="text-[10px] font-black uppercase tracking-[0.28em]"
-                    style={{ color: mode === "available" ? "#34d399" : accent.text }}
+                    style={{ color: modeColor.solid }}
                   >
                     {sportName} · Time window
                   </p>
-                  <h2 className="mt-2 text-2xl font-black tracking-tight">
+                  <h2 id={titleId} className="mt-2 text-2xl font-black tracking-tight">
                     Choose your slot
                   </h2>
                   <p className="mt-1 text-xs text-zinc-600">
@@ -2653,242 +2634,274 @@ function SlotPopup({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-[#06111f]/85 text-zinc-600 transition hover:text-white"
+                  aria-label="Close slot picker"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-[#06111f]/85 text-zinc-600 outline-none transition hover:text-white focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#081827]"
+                  style={{ ["--tw-ring-color" as any]: modeColor.solid }}
                 >
                   <X size={16} />
                 </button>
-              </div>
+              </motion.div>
 
-              {/* THE PHYSICAL GLASS CONTROLLER */}
-              <div className="relative mt-5 overflow-hidden rounded-[1.5rem] border border-zinc-800/80 bg-[#06111f]/85 px-4 py-5">
-                <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/25 to-transparent" />
-
-                <div className="relative flex min-h-[170px] items-center justify-center">
-                  <motion.div
-                    animate={
-                      mode === "available"
-                        ? { rotate: -90, x: -45, y: 24 }
-                        : { rotate: 0, x: 0, y: 0 }
-                    }
-                    transition={{ duration: 0.52, ease: [0.22, 1, 0.36, 1] }}
-                    style={{ rotate: dragRotate }}
-                    drag="x"
-                    dragConstraints={{ left: -95, right: 95 }}
-                    dragElastic={0.16}
-                    onDragEnd={(_, info) => {
-                      if (transitioning) return;
-                      const direction = info.offset.x;
-                      if (Math.abs(direction) < 65) {
-                        dragX.set(0);
-                        return;
-                      }
-
-                      completeModeChange(mode === "all" ? "available" : "all");
-                    }}
-                    whileDrag={{ scale: 1.05, cursor: "grabbing" }}
-                    className="relative z-10 h-24 w-16 cursor-grab touch-none"
-                    aria-label="Drag the glass to switch slot mode"
-                  >
-                    {/* Stem */}
-                    <div
-                      className="absolute bottom-0 left-1/2 h-7 w-1 -translate-x-1/2 rounded-full"
-                      style={{ background: mode === "available" ? "#34d399" : accent.text }}
-                    />
-                    {/* Base */}
-                    <div
-                      className="absolute bottom-0 left-1/2 h-1.5 w-12 -translate-x-1/2 rounded-full"
-                      style={{ background: mode === "available" ? "#34d399" : accent.text }}
-                    />
-                    {/* Bowl */}
-                    <div
-                      className="absolute left-1/2 top-0 h-16 w-14 -translate-x-1/2 overflow-hidden rounded-b-[45%] rounded-t-[12%] border-2 bg-white/[0.025]"
-                      style={{ borderColor: mode === "available" ? "#34d399" : accent.text }}
-                    >
-                      {/* Liquid */}
-                      <motion.div
-                        animate={{
-                          scaleY: mode === "available" ? 0.03 : 1,
-                          y: mode === "available" ? 44 : 0,
-                          opacity: mode === "available" ? 0 : 0.72,
-                        }}
-                        style={{ scaleY: dragLiquid }}
-                        transition={{ duration: 0.48, ease: "easeInOut" }}
-                        className="absolute inset-x-1 bottom-1 origin-bottom rounded-b-[38%]"
-                      >
-                        <div
-                          className="absolute inset-0 rounded-b-[38%]"
-                          style={{ background: mode === "available" ? "#34d399" : accent.solid }}
-                        />
-                        <motion.div
-                          animate={{ x: ["-25%", "35%", "-25%"] }}
-                          transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
-                          className="absolute left-0 right-0 top-1 h-2 rounded-full bg-white/20 blur-[2px]"
-                        />
-                      </motion.div>
-                    </div>
-
-                    {/* tiny highlight */}
-                    <span
-                      className="absolute left-3 top-3 h-8 w-1 rounded-full bg-white/10 blur-[1px]"
-                    />
-                  </motion.div>
-
-                  {/* Floor puddle */}
-                  <motion.div
-                    animate={{
-                      opacity: mode === "available" || transitioning ? 0.6 : 0,
-                      scaleX: mode === "available" || transitioning ? 1 : 0.2,
-                    }}
-                    transition={{ duration: 0.5, ease: "easeOut" }}
-                    className="absolute bottom-4 left-1/2 h-3 w-40 -translate-x-1/2 rounded-full blur-[2px]"
-                    style={{
-                      background:
-                        mode === "available" ? "rgba(52,211,153,0.48)" : accent.solid,
-                    }}
-                  />
-                  <motion.div
-                    animate={{
-                      opacity: mode === "available" || transitioning ? 0.34 : 0,
-                      scaleX: mode === "available" || transitioning ? 1.1 : 0.2,
-                    }}
-                    transition={{ duration: 0.65, ease: "easeOut" }}
-                    className="absolute bottom-3 left-1/2 h-1 w-28 -translate-x-1/2 rounded-full"
-                    style={{
-                      background:
-                        mode === "available" ? "#34d399" : accent.text,
-                    }}
-                  />
-                </div>
-
+              {/* Small decorative glass icon + ALL/AVAILABLE segmented control */}
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, delay: prefersReducedMotion ? 0 : 0.1 }}
+                className="mt-5 flex flex-col items-center gap-3"
+              >
                 <motion.div
-                  animate={{ opacity: transitioning ? 0.4 : 1 }}
-                  className="relative text-center"
+                  animate={
+                    prefersReducedMotion
+                      ? undefined
+                      : { y: [0, -3, 0] }
+                  }
+                  transition={{ duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+                  whileHover={prefersReducedMotion ? undefined : { scale: 1.08, rotate: 3 }}
+                  className="relative"
                 >
-                  <motion.p
-                    key={mode}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="text-sm font-black uppercase tracking-[0.24em]"
-                    style={{ color: mode === "available" ? "#34d399" : accent.text }}
-                  >
-                    {mode === "all" ? "All" : "Available"}
-                  </motion.p>
-                  <motion.p
-                    key={`${mode}-hint`}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="mt-1 text-[10px] font-medium text-zinc-700"
-                  >
-                    {mode === "all" ? "drag to empty" : "drag to fill & pick"}
-                  </motion.p>
-                </motion.div>
-              </div>
-
-              {/* Mode summary */}
-              <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-zinc-800/70 bg-[#06111f]/80 px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ background: mode === "available" ? "#34d399" : accent.solid }}
+                  <div
+                    className="pointer-events-none absolute inset-0 -z-10 rounded-full blur-md"
+                    style={{ background: `rgba(${modeColor.rgb},0.3)` }}
                   />
-                  <span className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-600">
-                    {mode === "all" ? `${allSlotCount} slots` : `${availableSlotCount} available`}
-                  </span>
+                  <motion.svg
+                    viewBox="0 0 24 32"
+                    className="h-9 w-7"
+                    aria-hidden="true"
+                  >
+                    <rect
+                      x="2"
+                      y="1"
+                      width="20"
+                      height="26"
+                      rx="4"
+                      fill="rgba(255,255,255,0.03)"
+                      stroke={modeColor.solid}
+                      strokeWidth={1.6}
+                    />
+                    <clipPath id="slot-glass-clip">
+                      <rect x="3.5" y="2.5" width="17" height="23" rx="3" />
+                    </clipPath>
+                    <motion.rect
+                      x="3.5"
+                      y={6}
+                      width="17"
+                      height={19}
+                      clipPath="url(#slot-glass-clip)"
+                      fill={modeColor.solid}
+                      fillOpacity={0.55}
+                      initial={false}
+                      animate={{
+                        y: mode === "available" ? 16 : 6,
+                        height: mode === "available" ? 9 : 19,
+                      }}
+                      transition={{ duration: prefersReducedMotion ? 0.15 : 0.5, ease: "easeInOut" }}
+                    />
+                    {!prefersReducedMotion && (
+                      <motion.rect
+                        x="4.5"
+                        width="2"
+                        height="4"
+                        rx="1"
+                        fill="rgba(255,255,255,0.35)"
+                        animate={{
+                          y: mode === "available" ? [16, 24, 16] : [6, 20, 6],
+                        }}
+                        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                      />
+                    )}
+                    <rect x="1" y="27" width="22" height="2.5" rx="1.25" fill={modeColor.solid} />
+                  </motion.svg>
+                </motion.div>
+
+                <div
+                  role="tablist"
+                  aria-label="Slot filter"
+                  className="relative flex items-center rounded-full border border-zinc-800/80 bg-[#06111f]/85 p-1"
+                >
+                  <motion.div
+                    className="absolute inset-y-1 rounded-full"
+                    style={{ background: `rgba(${modeColor.rgb},0.18)`, border: `1px solid rgba(${modeColor.rgb},0.4)` }}
+                    animate={{
+                      left: mode === "all" ? 4 : "50%",
+                      right: mode === "all" ? "50%" : 4,
+                    }}
+                    transition={{ duration: prefersReducedMotion ? 0.1 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  />
+                  {(["all", "available"] as const).map((value) => {
+                    const count = value === "all" ? allSlotCount : availableSlotCount;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        role="tab"
+                        aria-selected={mode === value}
+                        onClick={() => completeModeChange(value)}
+                        className="relative z-10 w-28 rounded-full px-4 py-2 text-xs font-black uppercase tracking-[0.14em] transition-colors"
+                        style={{ color: mode === value ? modeColor.solid : "#52525b" }}
+                      >
+                        {value === "all" ? "All" : "Available"} ·{" "}
+                        <motion.span
+                          key={count}
+                          initial={prefersReducedMotion ? false : { opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="inline-block"
+                        >
+                          {count}
+                        </motion.span>
+                      </button>
+                    );
+                  })}
                 </div>
+
                 {teamReservedSlotCount > 0 && mode === "all" && (
                   <span className="text-[10px] font-bold text-orange-300/70">
                     {teamReservedSlotCount} team reserved
                   </span>
                 )}
-              </div>
+              </motion.div>
 
               {/* SLOTS */}
+              <p className="mt-5 mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-600">
+                {mode === "all" ? "All slots" : "Available slots"}
+              </p>
               <div className="mt-4 max-h-[300px] overflow-y-auto pr-1">
-                {slots.length > 0 ? (
+                {error ? (
+                  <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.04] px-5 py-8 text-center">
+                    <CircleAlert className="mx-auto text-red-400/80" size={20} />
+                    <p className="mt-3 text-sm font-bold text-zinc-300">Unable to load slots</p>
+                    <p className="mt-1 text-xs text-zinc-600">
+                      We couldn't refresh the current availability.
+                    </p>
+                    {onRetry && (
+                      <button
+                        type="button"
+                        onClick={onRetry}
+                        className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-[#06111f] px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-300 transition hover:border-zinc-600 hover:text-white"
+                      >
+                        <RefreshCw size={13} />
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                ) : loading && slots.length === 0 ? (
+                  <div className="space-y-2" aria-hidden="true">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="relative h-[60px] overflow-hidden rounded-2xl border border-zinc-800/70 bg-zinc-900/40"
+                      >
+                        {!prefersReducedMotion && (
+                          <motion.div
+                            animate={{ x: ["-100%", "100%"] }}
+                            transition={{ duration: 1.4, repeat: Infinity, ease: "linear", delay: i * 0.1 }}
+                            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.04] to-transparent"
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : slots.length > 0 ? (
                   <div className="space-y-2">
-                    {slots.map((slot, index) => {
-                      const unavailable = slotUnavailable(slot);
-                      const selected = selectedSlotId === slot.id;
-                      const reserved =
-                        slot.isTeamReserved ||
-                        slot.slotType?.toLowerCase() === "team_reserved";
+                    <AnimatePresence initial={false}>
+                      {slots.map((slot, index) => {
+                        const unavailable = slotUnavailable(slot);
+                        const selected = selectedSlotId === slot.id;
+                        const reserved =
+                          slot.isTeamReserved ||
+                          slot.slotType?.toLowerCase() === "team_reserved";
+                        const duration = slotDurationLabel(slot);
 
-                      return (
-                        <motion.button
-                          type="button"
-                          key={slot.id}
-                          initial={{ opacity: 0, y: 6 }}
-                          animate={{ opacity: unavailable ? 0.45 : 1, y: 0 }}
-                          transition={{ delay: index * 0.025 }}
-                          whileHover={!unavailable ? { x: 2 } : undefined}
-                          disabled={unavailable}
-                          onClick={() => onSelect(slot)}
-                          className="flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-left transition disabled:cursor-not-allowed"
-                          style={{
-                            borderColor: selected
-                              ? "rgba(52,211,153,0.35)"
-                              : unavailable
-                                ? "rgba(63,63,70,0.45)"
-                                : accent.border,
-                            background: selected
-                              ? "rgba(16,185,129,0.07)"
-                              : unavailable
-                                ? "rgba(24,24,27,0.36)"
-                                : accent.bg,
-                          }}
-                        >
-                          <div className="flex items-center gap-3">
-                            <motion.span
-                              animate={
-                                !unavailable
-                                  ? { scale: [1, 1.2, 1], opacity: [0.65, 1, 0.65] }
-                                  : { scale: 1, opacity: 1 }
-                              }
-                              transition={{ duration: 2.2, repeat: !unavailable ? Infinity : 0 }}
-                              className={`h-2 w-2 rounded-full ${
-                                reserved
-                                  ? "bg-orange-400"
-                                  : slot.isBooked
-                                    ? "bg-red-400"
-                                    : "bg-[#a8f0b0]"
+                        return (
+                          <motion.button
+                            type="button"
+                            key={slot.id}
+                            layout={!prefersReducedMotion}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: unavailable ? 0.45 : 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.97 }}
+                            transition={{ delay: prefersReducedMotion ? 0 : index * 0.045, duration: 0.25 }}
+                            whileHover={!unavailable ? { x: 2 } : undefined}
+                            disabled={unavailable}
+                            onClick={() => onSelect(slot)}
+                            className="flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-left transition disabled:cursor-not-allowed"
+                            style={{
+                              borderColor: selected
+                                ? `rgba(${modeColor.rgb},0.45)`
+                                : unavailable
+                                  ? "rgba(63,63,70,0.45)"
+                                  : accent.border,
+                              background: selected
+                                ? `rgba(${modeColor.rgb},0.10)`
+                                : unavailable
+                                  ? "rgba(24,24,27,0.36)"
+                                  : accent.bg,
+                            }}
+                          >
+                            <div className="flex items-center gap-3">
+                              <Clock3
+                                size={15}
+                                className="shrink-0"
+                                style={{ color: unavailable ? "#52525b" : modeColor.solid }}
+                              />
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-black text-zinc-200">
+                                    {formatTime(slot.startTime)}
+                                  </p>
+                                  <motion.span
+                                    className="inline-block h-px w-5 origin-left"
+                                    style={{ background: unavailable ? "#3f3f46" : modeColor.solid }}
+                                    animate={{ scaleX: selected ? 1.4 : 1 }}
+                                    transition={{ duration: 0.25 }}
+                                  />
+                                  <p className="text-sm font-black text-zinc-200">
+                                    {formatTime(slot.endTime)}
+                                  </p>
+                                </div>
+                                <p className="mt-0.5 text-[9px] font-black uppercase tracking-[0.15em] text-zinc-700">
+                                  {reserved
+                                    ? slot.teamName || "Team reserved"
+                                    : slot.isBooked
+                                      ? "Fully booked"
+                                      : duration
+                                        ? duration
+                                        : "Open slot"}
+                                </p>
+                              </div>
+                            </div>
+
+                            <span
+                              className={`flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.14em] ${
+                                selected
+                                  ? ""
+                                  : reserved
+                                    ? "text-orange-300"
+                                    : slot.isBooked
+                                      ? "text-red-300"
+                                      : "text-[#a8f0b0]"
                               }`}
-                            />
-                            <div>
-                              <p className="text-sm font-black text-zinc-200">
-                                {formatTime(slot.startTime)} — {formatTime(slot.endTime)}
-                              </p>
-                              <p className="mt-0.5 text-[9px] font-black uppercase tracking-[0.15em] text-zinc-700">
-                                {reserved
-                                  ? slot.teamName || "Team reserved"
+                              style={selected ? { color: modeColor.solid } : undefined}
+                            >
+                              {selected ? (
+                                <CheckCircle2 size={14} />
+                              ) : reserved || slot.isBooked ? (
+                                reserved ? <Ban size={13} /> : <LockKeyhole size={13} />
+                              ) : (
+                                <Check size={13} />
+                              )}
+                              {selected
+                                ? "Selected"
+                                : reserved
+                                  ? "Reserved"
                                   : slot.isBooked
                                     ? "Booked"
-                                    : "Open slot"}
-                              </p>
-                            </div>
-                          </div>
-
-                          <span
-                            className={`text-[9px] font-black uppercase tracking-[0.14em] ${
-                              selected
-                                ? "text-[#a8f0b0]"
-                                : reserved
-                                  ? "text-orange-300"
-                                  : slot.isBooked
-                                    ? "text-red-300"
-                                    : "text-[#a8f0b0]"
-                            }`}
-                          >
-                            {selected
-                              ? "Selected"
-                              : reserved
-                                ? "Reserved"
-                                : slot.isBooked
-                                  ? "Booked"
-                                  : "Available"}
-                          </span>
-                        </motion.button>
-                      );
-                    })}
+                                    : "Available"}
+                            </span>
+                          </motion.button>
+                        );
+                      })}
+                    </AnimatePresence>
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-dashed border-zinc-800 px-5 py-8 text-center">
@@ -2901,10 +2914,44 @@ function SlotPopup({
                 )}
               </div>
 
-              <div className="mt-4 flex items-center justify-between gap-3 text-[9px] font-black uppercase tracking-[0.14em] text-zinc-700">
+              <div className="mt-3 flex items-center justify-between gap-3 text-[9px] font-black uppercase tracking-[0.14em] text-zinc-700">
                 <span>5–6 hour rolling window</span>
-                <span>{loading ? "Updating" : "Live"}</span>
+                <span className="flex items-center gap-1.5">
+                  {loading ? (
+                    "Updating"
+                  ) : (
+                    <>
+                      Live
+                      <motion.span
+                        animate={
+                          prefersReducedMotion
+                            ? { opacity: 1 }
+                            : { opacity: [0.4, 1, 0.4], scale: [1, 1.2, 1] }
+                        }
+                        transition={{ duration: 1.8, repeat: prefersReducedMotion ? 0 : Infinity, ease: "easeInOut" }}
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ background: modeColor.solid }}
+                      />
+                    </>
+                  )}
+                </span>
               </div>
+
+              <button
+                type="button"
+                disabled={!canContinue}
+                onClick={() => {
+                  if (canContinue) onClose();
+                }}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-sm font-black uppercase tracking-[0.1em] transition disabled:cursor-not-allowed disabled:opacity-35"
+                style={{
+                  background: canContinue ? modeColor.solid : "rgba(63,63,70,0.4)",
+                  color: canContinue ? "#06111f" : "#71717a",
+                }}
+              >
+                Continue
+                {canContinue && <ArrowRight size={16} />}
+              </button>
             </div>
           </motion.div>
         </motion.div>

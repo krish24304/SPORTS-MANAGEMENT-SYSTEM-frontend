@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 import {
@@ -25,8 +25,16 @@ import { AnimatePresence, motion } from "framer-motion";
 
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import SportsCarousel from "@/components/ui/SportsCarousel";
+import NextBookingCard, { type NextBooking } from "@/components/student/NextBookingCard";
+import SlotEndedPrompt from "@/components/student/SlotEndedPrompt";
+import { getAuthToken, getUser } from "@/lib/auth";
 import { studentApi } from "@/lib/student-api";
-import type { Sport as ApiSport } from "@/types";
+import type { Booking, Sport as ApiSport } from "@/types";
+
+type BookingWithRelations = Booking & {
+  sport?: { name: string } | null;
+  slot?: { startTime: string; endTime: string } | null;
+};
 
 type ResourceUnit = {
   id: number;
@@ -334,6 +342,117 @@ export default function StudentDashboard() {
 
   const sport = selectedSport;
 
+  const [nextBooking, setNextBooking] = useState<NextBooking | null>(null);
+  const [bookingLoading, setBookingLoading] = useState(true);
+  const [bookingError, setBookingError] = useState("");
+  const [bookingNeedsSignIn, setBookingNeedsSignIn] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [returningId, setReturningId] = useState<number | null>(null);
+  const [slotEndedBooking, setSlotEndedBooking] = useState<NextBooking | null>(null);
+
+  const loadNextBooking = useCallback(async () => {
+    const user = getUser();
+    if (!user || !getAuthToken()) {
+      setBookingNeedsSignIn(true);
+      setBookingError("Not signed in on this browser. This card updates as soon as you sign in.");
+      setBookingLoading(false);
+      return;
+    }
+
+    try {
+      setBookingError("");
+      setBookingNeedsSignIn(false);
+      const data = (await studentApi.getMyBookings(user.id)) as BookingWithRelations[];
+      const upcoming = (Array.isArray(data) ? data : [])
+        .filter((item) => item.status === "active" || item.status === "return_requested")
+        .map((item) => ({
+          id: item.id,
+          status: item.status,
+          sportName: item.sport?.name ?? "Sport",
+          startTime: item.startTime ?? item.slot?.startTime ?? null,
+          endTime: item.endTime ?? item.slot?.endTime ?? null,
+        }))
+        .sort((a, b) => {
+          if (!a.startTime) return 1;
+          if (!b.startTime) return -1;
+          return new Date(a.startTime).getTime() - new Date(b.startTime).getTime();
+        });
+
+      setNextBooking(upcoming[0] ?? null);
+    } catch (error) {
+      console.error(error);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setBookingError(
+        /authentication|token|sign in/i.test(message)
+          ? "Your session has ended, so your bookings can't be loaded right now."
+          : `Unable to load your booking: ${message}`
+      );
+    } finally {
+      setBookingLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadNextBooking();
+  }, [loadNextBooking]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") loadNextBooking();
+    };
+    window.addEventListener("storage", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [loadNextBooking]);
+
+  useEffect(() => {
+    if (!nextBooking?.endTime) return;
+
+    const target = nextBooking;
+    const endMs = new Date(nextBooking.endTime).getTime();
+    if (endMs <= Date.now()) return;
+    const MAX_TIMER_MS = 2_147_483_647;
+    let timer: number;
+
+    const schedule = () => {
+      const remaining = endMs - Date.now();
+
+      if (remaining > MAX_TIMER_MS) {
+        timer = window.setTimeout(schedule, MAX_TIMER_MS);
+        return;
+      }
+
+      timer = window.setTimeout(() => {
+        setSlotEndedBooking(target);
+        if ("vibrate" in navigator) navigator.vibrate([300, 150, 300]);
+        loadNextBooking();
+      }, Math.max(remaining, 0));
+    };
+
+    schedule();
+    return () => window.clearTimeout(timer);
+  }, [nextBooking, loadNextBooking]);
+
+  const requestReturn = async (bookingId: number) => {
+    setActionError("");
+    setReturningId(bookingId);
+
+    try {
+      await studentApi.requestReturn(bookingId);
+      setSlotEndedBooking(null);
+    } catch (error) {
+      console.error(error);
+      const message = error instanceof Error ? error.message : "";
+      setActionError(`Could not send return request${message ? `: ${message}` : "."}`);
+    } finally {
+      setReturningId(null);
+      await loadNextBooking();
+    }
+  };
+
   /* =======================================================
      LOAD REAL SPORTS DATA
   ======================================================= */
@@ -472,170 +591,19 @@ export default function StudentDashboard() {
             </Link>
           </div>
 
-          <motion.div
-            initial={{
-              opacity: 0,
-              y: 10,
+          <NextBookingCard
+            booking={nextBooking}
+            loading={bookingLoading}
+            loadError={bookingError}
+            needsSignIn={bookingNeedsSignIn}
+            actionError={slotEndedBooking ? "" : actionError}
+            returning={returningId !== null && returningId === nextBooking?.id}
+            onRequestReturn={requestReturn}
+            onRetry={() => {
+              setBookingLoading(true);
+              loadNextBooking();
             }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              duration: 0.4,
-              ease: "easeOut",
-            }}
-            className="
-              group
-              relative
-              overflow-hidden
-              rounded-[24px]
-              border
-              border-zinc-800/80
-              bg-[#090b0b]
-              p-5
-              shadow-[0_15px_45px_rgba(0,0,0,0.18)]
-              transition-all
-              duration-300
-              hover:border-emerald-400/15
-            "
-          >
-            <motion.div
-              animate={{
-                opacity: [0.35, 0.6, 0.35],
-                scale: [0.9, 1, 0.9],
-              }}
-              transition={{
-                duration: 5,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-              className="
-                pointer-events-none
-                absolute
-                -right-20
-                -top-20
-                h-40
-                w-40
-                rounded-full
-                bg-emerald-400/[0.035]
-                blur-3xl
-              "
-            />
-
-            <div
-              className="
-                pointer-events-none
-                absolute
-                inset-x-0
-                bottom-0
-                h-px
-                bg-gradient-to-r
-                from-transparent
-                via-emerald-400/10
-                to-transparent
-              "
-            />
-
-            <div
-              className="
-                relative
-                flex
-                flex-col
-                justify-between
-                gap-5
-                md:flex-row
-                md:items-center
-              "
-            >
-              <div className="flex items-center gap-4">
-                <motion.div
-                  whileHover={{
-                    scale: 1.06,
-                    rotate: 2,
-                  }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 350,
-                    damping: 20,
-                  }}
-                  className="
-                    flex
-                    h-11
-                    w-11
-                    shrink-0
-                    items-center
-                    justify-center
-                    rounded-xl
-                    border
-                    border-emerald-400/10
-                    bg-emerald-400/[0.05]
-                    text-emerald-400/80
-                  "
-                >
-                  <CalendarCheck size={20} />
-                </motion.div>
-
-                <div>
-                  <h3 className="font-semibold text-white">
-                    Badminton
-                  </h3>
-
-                  <div
-                    className="
-                      mt-1
-                      flex
-                      flex-wrap
-                      items-center
-                      gap-3
-                      text-sm
-                      text-zinc-500
-                    "
-                  >
-                    <span>Today</span>
-
-                    <span className="text-zinc-700">
-                      •
-                    </span>
-
-                    <span className="flex items-center gap-1">
-                      <Clock3 size={13} />
-                      5:30 PM – 6:30 PM
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <motion.span
-                animate={{
-                  y: [0, -1, 0],
-                }}
-                transition={{
-                  duration: 3,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
-                className="
-                  inline-flex
-                  w-fit
-                  items-center
-                  gap-1.5
-                  rounded-full
-                  border
-                  border-emerald-400/15
-                  bg-emerald-400/[0.045]
-                  px-3
-                  py-1.5
-                  text-xs
-                  font-medium
-                  text-emerald-300/80
-                "
-              >
-                <CheckCircle2 size={13} />
-                Confirmed
-              </motion.span>
-            </div>
-          </motion.div>
+          />
         </section>
 
         {/* =================================================
@@ -661,6 +629,26 @@ export default function StudentDashboard() {
           )}
         </section>
       </div>
+
+      {/* =====================================================
+          SLOT ENDED PROMPT
+      ===================================================== */}
+
+      <AnimatePresence>
+        {slotEndedBooking && (
+          <SlotEndedPrompt
+            key={`slot-ended-${slotEndedBooking.id}`}
+            sportName={slotEndedBooking.sportName}
+            submitting={returningId === slotEndedBooking.id}
+            onRequestReturn={() => requestReturn(slotEndedBooking.id)}
+            error={actionError}
+            onDismiss={() => {
+              setSlotEndedBooking(null);
+              setActionError("");
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* =====================================================
           SPORT AVAILABILITY MODAL

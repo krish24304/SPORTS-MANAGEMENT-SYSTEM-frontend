@@ -58,3 +58,19 @@ export function getAuthToken(): string | null {
   const user = getUser();
   return typeof (user as any)?.token === "string" ? (user as any).token : null;
 }
+
+// Spread this into a fetch call's `headers` for any route guarded by the
+// backend's `authenticate` middleware. Returns {} when logged out, so it's
+// always safe to spread without an extra null check at the call site.
+export function getAuthHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Drop-in replacement for fetch that adds the sign-in header for backend calls.
+// Headers the caller already set are kept; the sign-in header is added on top.
+export function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  Object.entries(getAuthHeaders()).forEach(([key, value]) => headers.set(key, value));
+  return fetch(input, { ...init, headers });
+}

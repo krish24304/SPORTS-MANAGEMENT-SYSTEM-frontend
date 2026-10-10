@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, Menu, User, ChevronRight } from "lucide-react";
-import { getUser } from "@/lib/auth";
+import { Bell, Menu, User, ChevronRight, LogOut, Mail, ShieldCheck, UserPlus, FileText, Maximize2, Check, X as XIcon, Phone, Hash } from "lucide-react";
+import { authFetch, clearUser, getAuthToken, getUser } from "@/lib/auth";
 
 type NavbarProps = {
   onOpenMobileSidebar?: () => void;
@@ -20,6 +21,16 @@ type Notice = {
   sport?: {
     name: string;
   } | null;
+};
+
+type SignupRequest = {
+  id: number;
+  name: string;
+  email: string;
+  rollNo: string | null;
+  phone: string | null;
+  idCardPhoto: string | null;
+  createdAt: string;
 };
 
 const API_BASE_URL =
@@ -62,25 +73,24 @@ function formatRelativeTime(dateString: string) {
 export default function Navbar({
   onOpenMobileSidebar = () => {},
 }: NavbarProps) {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [user, setUser] = useState<any>(null);
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notices, setNotices] = useState<Notice[]>([
-  {
-    id: 999999,
-    title: "Football Practice Rescheduled",
-    message:
-      "Today's football practice has been moved to 5:30 PM at the main sports ground.",
-    type: "announcement",
-    sportId: 1,
-    createdAt: new Date().toISOString(),
-    sport: {
-      name: "Football",
-    },
-  },
-]);
-const [viewedIds, setViewedIds] = useState<number[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
+
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  const [signupRequests, setSignupRequests] = useState<SignupRequest[]>([]);
+  const [signupRequestsOpen, setSignupRequestsOpen] = useState(false);
+  const [selectedSignupRequest, setSelectedSignupRequest] = useState<SignupRequest | null>(null);
+  const [signupActionLoading, setSignupActionLoading] = useState(false);
+  const [decliningSignup, setDecliningSignup] = useState(false);
+  const [declineReason, setDeclineReason] = useState("");
+  const [enlargedIdCard, setEnlargedIdCard] = useState(false);
+  const signupRequestsRef = useRef<HTMLDivElement>(null);
 
   const notificationRef = useRef<HTMLDivElement>(null);
 
@@ -101,23 +111,7 @@ const [viewedIds, setViewedIds] = useState<number[]>([]);
    * ============================================================
    */
 
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(VIEWED_STORAGE_KEY);
 
-      if (!stored) return;
-
-      const parsed = JSON.parse(stored);
-
-      if (Array.isArray(parsed)) {
-        setViewedIds(
-          parsed.map(Number).filter(Number.isFinite)
-        );
-      }
-    } catch {
-      // Ignore malformed local storage.
-    }
-  }, []);
 
   /*
    * ============================================================
@@ -126,45 +120,38 @@ const [viewedIds, setViewedIds] = useState<number[]>([]);
    */
 
   useEffect(() => {
+    const currentUser = getUser();
+
+    if (!getAuthToken() || currentUser?.role === "staff" || currentUser?.role === "admin") {
+      setNotices([]);
+      return;
+    }
+
     let cancelled = false;
 
-    const fetchAnnouncements = async () => {
+    const fetchUnread = async () => {
       try {
-        const response = await fetch(
-          `${API_BASE_URL}/notices`,
-          {
-            cache: "no-store",
-          }
-        );
+        const response = await authFetch(`${API_BASE_URL}/notices/unread`, {
+          cache: "no-store",
+        });
 
         if (!response.ok) {
-          throw new Error(
-            "Failed to fetch announcements"
-          );
+          throw new Error("Failed to fetch announcements");
         }
 
         const data = await response.json();
 
         if (!cancelled) {
-  // Keep the test notification visible if the API has no announcements.
-  if (Array.isArray(data) && data.length > 0) {
-    setNotices(data);
-  }
-}
+          setNotices(Array.isArray(data.notices) ? data.notices : []);
+        }
       } catch (error) {
-        console.error(
-          "NAVBAR ANNOUNCEMENTS ERROR:",
-          error
-        );
+        console.error("NAVBAR ANNOUNCEMENTS ERROR:", error);
       }
     };
 
-    fetchAnnouncements();
+    fetchUnread();
 
-    const interval = window.setInterval(
-      fetchAnnouncements,
-      30000
-    );
+    const interval = window.setInterval(fetchUnread, 30000);
 
     return () => {
       cancelled = true;
@@ -193,11 +180,8 @@ const [viewedIds, setViewedIds] = useState<number[]>([]);
    */
 
   const unreadNotices = useMemo(() => {
-    return sortedNotices.filter(
-      (notice) =>
-        !viewedIds.includes(Number(notice.id))
-    );
-  }, [sortedNotices, viewedIds]);
+    return sortedNotices;
+  }, [sortedNotices]);
 
   const popupNotices = unreadNotices.slice(0, 4);
 
@@ -210,18 +194,6 @@ const hasUnread = unreadCount > 0;
    * ============================================================
    */
 
-  const saveViewedIds = (ids: number[]) => {
-    setViewedIds(ids);
-
-    try {
-      localStorage.setItem(
-        VIEWED_STORAGE_KEY,
-        JSON.stringify(ids)
-      );
-    } catch {
-      // Ignore storage errors.
-    }
-  };
 
   /*
    * ============================================================
@@ -229,12 +201,20 @@ const hasUnread = unreadCount > 0;
    * ============================================================
    */
 
-  const handleNotificationClick = (id: number) => {
-    const merged = Array.from(
-      new Set([...viewedIds, Number(id)])
-    );
+  const handleNotificationClick = async (id: number) => {
+    setNotices((current) => current.filter((notice) => Number(notice.id) !== Number(id)));
 
-    saveViewedIds(merged);
+    try {
+      const response = await authFetch(`${API_BASE_URL}/notices/${id}/read`, {
+        method: "POST",
+      });
+
+      if (!response.ok && response.status !== 404) {
+        throw new Error("Could not mark announcement as read");
+      }
+    } catch (error) {
+      console.error("MARK ANNOUNCEMENT READ ERROR:", error);
+    }
   };
 
   /*
@@ -281,6 +261,125 @@ const hasUnread = unreadCount > 0;
     };
   }, [notificationsOpen]);
 
+  useEffect(() => {
+    if (!profileOpen) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!profileRef.current) return;
+
+      if (!profileRef.current.contains(event.target as Node)) {
+        setProfileOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [profileOpen]);
+
+  useEffect(() => {
+    if (!signupRequestsOpen) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!signupRequestsRef.current) return;
+
+      if (!signupRequestsRef.current.contains(event.target as Node)) {
+        setSignupRequestsOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [signupRequestsOpen]);
+
+  // Pending student signups -- staff/admin only.
+  useEffect(() => {
+    const currentUser = getUser();
+    const staffOrAdmin = currentUser?.role === "admin" || currentUser?.role === "staff";
+
+    if (!getAuthToken() || !staffOrAdmin) {
+      setSignupRequests([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchSignupRequests = async () => {
+      try {
+        const response = await authFetch(`${API_BASE_URL}/signup-requests`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Failed to fetch signup requests");
+        const data = await response.json();
+        if (!cancelled) setSignupRequests(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error("SIGNUP REQUESTS ERROR:", error);
+      }
+    };
+
+    fetchSignupRequests();
+    const interval = window.setInterval(fetchSignupRequests, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const openSignupRequest = (request: SignupRequest) => {
+    setSelectedSignupRequest(request);
+    setSignupRequestsOpen(false);
+    setDecliningSignup(false);
+    setDeclineReason("");
+    setEnlargedIdCard(false);
+  };
+
+  const approveSignupRequest = async () => {
+    if (!selectedSignupRequest) return;
+    setSignupActionLoading(true);
+    try {
+      const response = await authFetch(`${API_BASE_URL}/signup-requests/${selectedSignupRequest.id}/approve`, {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error("Failed to approve");
+      setSignupRequests((prev) => prev.filter((r) => r.id !== selectedSignupRequest.id));
+      setSelectedSignupRequest(null);
+    } catch (error) {
+      console.error("APPROVE SIGNUP ERROR:", error);
+    } finally {
+      setSignupActionLoading(false);
+    }
+  };
+
+  const declineSignupRequest = async () => {
+    if (!selectedSignupRequest) return;
+    setSignupActionLoading(true);
+    try {
+      const response = await authFetch(`${API_BASE_URL}/signup-requests/${selectedSignupRequest.id}/decline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: declineReason.trim() || undefined }),
+      });
+      if (!response.ok) throw new Error("Failed to decline");
+      setSignupRequests((prev) => prev.filter((r) => r.id !== selectedSignupRequest.id));
+      setSelectedSignupRequest(null);
+      setDecliningSignup(false);
+      setDeclineReason("");
+    } catch (error) {
+      console.error("DECLINE SIGNUP ERROR:", error);
+    } finally {
+      setSignupActionLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    clearUser();
+    router.push("/login");
+  };
+
   /*
    * ============================================================
    * HYDRATION
@@ -296,6 +395,8 @@ const hasUnread = unreadCount > 0;
   const firstName =
     user?.name?.split(" ")[0] || "Student";
 
+  const isStaffOrAdmin = user?.role === "admin" || user?.role === "staff";
+
   /*
    * ============================================================
    * NAVBAR
@@ -303,6 +404,7 @@ const hasUnread = unreadCount > 0;
    */
 
   return (
+    <>
     <header className="sticky top-0 z-40 border-b border-zinc-800 bg-zinc-950/95 backdrop-blur-xl">
       <div className="flex h-[73px] items-center justify-between px-5 md:px-8">
 
@@ -339,7 +441,11 @@ const hasUnread = unreadCount > 0;
             </p>
 
             <p className="text-xs text-zinc-500">
-              Student Portal
+              {user?.role === "admin"
+                ? "Admin Portal"
+                : user?.role === "staff"
+                ? "Staff Portal"
+                : "Student Portal"}
             </p>
           </div>
         </div>
@@ -351,8 +457,11 @@ const hasUnread = unreadCount > 0;
         <div className="flex items-center gap-2 sm:gap-3">
 
           {/* =================================================
-              NOTIFICATIONS
+              NOTIFICATIONS (students only -- staff/admin manage
+              announcements directly from their own dashboards)
           ================================================= */}
+
+          {!isStaffOrAdmin && (
 
           <div
             ref={notificationRef}
@@ -1012,9 +1121,180 @@ const hasUnread = unreadCount > 0;
 
           </div>
 
+          )}
+
+          {/* =================================================
+              SIGNUP REQUESTS (staff/admin only)
+          ================================================== */}
+
+          {isStaffOrAdmin && (
+            <div ref={signupRequestsRef} className="relative">
+              <motion.button
+                type="button"
+                onClick={() => setSignupRequestsOpen((value) => !value)}
+                aria-label="Open signup requests"
+                aria-expanded={signupRequestsOpen}
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.94 }}
+                className="group relative flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-950 text-zinc-400 transition-all duration-200 hover:border-violet-500/40 hover:text-violet-300 hover:shadow-[0_0_20px_rgba(139,92,246,0.2)]"
+              >
+                <UserPlus size={18} />
+                {signupRequests.length > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-zinc-950 bg-rose-500 px-1 text-[10px] font-bold text-white">
+                    {signupRequests.length}
+                  </span>
+                )}
+              </motion.button>
+
+              <AnimatePresence>
+                {signupRequestsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -12, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                    transition={{ type: "spring", stiffness: 380, damping: 28, mass: 0.75 }}
+                    className="absolute right-0 top-full z-[120] mt-3 w-[min(380px,calc(100vw-24px))] overflow-hidden rounded-[22px] border border-zinc-800 bg-[#090b0b] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)]"
+                  >
+                    <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+                      <p className="font-bold text-white">Signup Requests</p>
+                      <span className="rounded-full bg-violet-500/15 px-2.5 py-0.5 text-xs font-semibold text-violet-300">
+                        {signupRequests.length} pending
+                      </span>
+                    </div>
+
+                    <div className="max-h-[360px] overflow-y-auto">
+                      {signupRequests.length === 0 ? (
+                        <p className="px-5 py-8 text-center text-sm text-zinc-500">No pending signups.</p>
+                      ) : (
+                        signupRequests.map((request) => (
+                          <button
+                            key={request.id}
+                            type="button"
+                            onClick={() => openSignupRequest(request)}
+                            className="flex w-full items-center gap-3 border-b border-zinc-900 px-5 py-3.5 text-left transition-colors hover:bg-zinc-900/60"
+                          >
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-violet-500/20 bg-violet-500/10 text-sm font-bold text-violet-300">
+                              {request.name.trim().charAt(0).toUpperCase() || "?"}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold text-white">{request.name}</p>
+                              <p className="truncate text-xs text-zinc-500">{request.rollNo || request.email}</p>
+                            </div>
+                            <ChevronRight size={16} className="shrink-0 text-zinc-600" />
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
           {/* =================================================
               PROFILE
           ================================================== */}
+
+          {isStaffOrAdmin ? (
+
+            <div ref={profileRef} className="relative border-l border-zinc-800 pl-2 sm:pl-3">
+
+              <motion.button
+                type="button"
+                onClick={() => setProfileOpen((value) => !value)}
+                aria-label="Open profile menu"
+                aria-expanded={profileOpen}
+                whileHover={{ scale: 1.02 }}
+                className="group flex items-center gap-2 sm:gap-3"
+              >
+
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-zinc-400 transition-all duration-200 group-hover:border-emerald-500/40 group-hover:bg-emerald-500/10 group-hover:text-emerald-400"
+                >
+
+                  <User size={17} />
+
+                  <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-emerald-400" />
+
+                </motion.div>
+
+                <div className="hidden sm:block">
+
+                  <p className="text-sm font-medium text-white transition-colors group-hover:text-emerald-300">
+                    {firstName}
+                  </p>
+
+                  <p className="flex items-center gap-1 text-xs capitalize text-zinc-500">
+
+                    {user?.role || "staff"}
+
+                    <ChevronRight
+                      size={11}
+                      className={`transition-transform duration-200 ${profileOpen ? "rotate-90" : "group-hover:translate-x-0.5"}`}
+                    />
+
+                  </p>
+
+                </div>
+
+              </motion.button>
+
+              <AnimatePresence>
+                {profileOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -12, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                    transition={{ type: "spring", stiffness: 380, damping: 28, mass: 0.75 }}
+                    className="absolute right-0 top-full z-[100] mt-3 w-[280px] overflow-hidden rounded-[22px] border border-zinc-800 bg-[#090b0b] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7)]"
+                  >
+
+                    <div className="p-5">
+
+                      <div className="flex items-center gap-3">
+
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-emerald-400">
+                          <User size={20} />
+                        </div>
+
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-bold text-white">
+                            {user?.name || "—"}
+                          </p>
+                          <p className="flex items-center gap-1 text-xs font-semibold capitalize text-emerald-400">
+                            <ShieldCheck size={12} />
+                            {user?.role || "staff"}
+                          </p>
+                        </div>
+
+                      </div>
+
+                      {user?.email && (
+                        <div className="mt-4 flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400">
+                          <Mail size={13} className="shrink-0 text-zinc-500" />
+                          <span className="truncate">{user.email}</span>
+                        </div>
+                      )}
+
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="flex w-full items-center justify-center gap-2 border-t border-zinc-800 bg-zinc-900/40 px-5 py-3.5 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                    >
+                      <LogOut size={15} />
+                      Log out
+                    </button>
+
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+            </div>
+
+          ) : (
 
           <Link
             href="/profile"
@@ -1053,9 +1333,232 @@ const hasUnread = unreadCount > 0;
 
           </Link>
 
+          )}
+
         </div>
 
       </div>
     </header>
+
+    {/* =================================================
+        SIGNUP REQUEST DETAILS (staff/admin only)
+    ================================================== */}
+
+    <AnimatePresence>
+      {selectedSignupRequest && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={() => setSelectedSignupRequest(null)}
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 p-6 backdrop-blur-xl"
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 300, damping: 26 }}
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-[640px] max-h-[88vh] overflow-y-auto rounded-[32px] border border-violet-500/20 bg-zinc-950 shadow-[0_0_90px_rgba(139,92,246,0.18)]"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-zinc-800 p-7">
+              <div className="flex items-center gap-4">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-violet-500/25 bg-violet-500/10 text-xl font-black text-violet-300">
+                  {selectedSignupRequest.name.trim().charAt(0).toUpperCase() || "?"}
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black text-white">{selectedSignupRequest.name}</h2>
+                  <p className="text-sm text-zinc-500">Signup request</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedSignupRequest(null)}
+                className="rounded-xl border border-zinc-800 p-2 text-zinc-400 transition hover:border-red-500/40 hover:text-red-400"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-7">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
+                  <Mail size={15} className="shrink-0 text-zinc-500" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Email</p>
+                    <p className="truncate text-sm text-zinc-200">{selectedSignupRequest.email}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
+                  <Hash size={15} className="shrink-0 text-zinc-500" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">College ID</p>
+                    <p className="truncate text-sm text-zinc-200">{selectedSignupRequest.rollNo || "—"}</p>
+                  </div>
+                </div>
+                {selectedSignupRequest.phone && (
+                  <div className="flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
+                    <Phone size={15} className="shrink-0 text-zinc-500" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Phone</p>
+                      <p className="truncate text-sm text-zinc-200">{selectedSignupRequest.phone}</p>
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
+                  <UserPlus size={15} className="shrink-0 text-zinc-500" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Submitted</p>
+                    <p className="truncate text-sm text-zinc-200">{formatRelativeTime(selectedSignupRequest.createdAt)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">ID Card</p>
+                {selectedSignupRequest.idCardPhoto ? (
+                  /\.pdf$/i.test(selectedSignupRequest.idCardPhoto) ? (
+                    <a
+                      href={`${API_BASE_URL}${selectedSignupRequest.idCardPhoto}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-5 py-4 text-sm font-semibold text-violet-300 transition hover:border-violet-500/40"
+                    >
+                      <FileText size={18} />
+                      Open uploaded ID (PDF)
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setEnlargedIdCard(true)}
+                      className="group relative block w-full overflow-hidden rounded-2xl border border-zinc-800"
+                    >
+                      <img
+                        src={`${API_BASE_URL}${selectedSignupRequest.idCardPhoto}`}
+                        alt="Uploaded ID card"
+                        className="max-h-[260px] w-full object-contain bg-zinc-900"
+                      />
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/40 group-hover:opacity-100">
+                        <span className="flex items-center gap-2 rounded-full bg-black/70 px-4 py-2 text-xs font-semibold text-white">
+                          <Maximize2 size={13} /> View full size
+                        </span>
+                      </span>
+                    </button>
+                  )
+                ) : (
+                  <p className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/40 px-5 py-6 text-center text-sm text-zinc-500">
+                    No ID card uploaded
+                  </p>
+                )}
+              </div>
+
+              {decliningSignup && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                    Reason (optional, shown to the student)
+                  </label>
+                  <textarea
+                    value={declineReason}
+                    onChange={(event) => setDeclineReason(event.target.value)}
+                    maxLength={300}
+                    placeholder="e.g. The uploaded ID card could not be verified."
+                    className="h-24 w-full resize-none rounded-2xl border border-red-500/20 bg-zinc-900/60 p-4 text-sm outline-none transition focus:border-red-500/50"
+                  />
+                </motion.div>
+              )}
+            </div>
+
+            <div className="flex gap-3 border-t border-zinc-800 p-7">
+              {!decliningSignup ? (
+                <>
+                  <motion.button
+                    type="button"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    disabled={signupActionLoading}
+                    onClick={() => setDecliningSignup(true)}
+                    className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl border border-red-500/30 text-sm font-bold text-red-400 transition hover:bg-red-500/10 disabled:opacity-60"
+                  >
+                    <XIcon size={16} />
+                    Decline
+                  </motion.button>
+                  <motion.button
+                    type="button"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    disabled={signupActionLoading}
+                    onClick={() => void approveSignupRequest()}
+                    className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-sm font-bold text-black shadow-[0_0_25px_rgba(16,185,129,0.3)] transition disabled:opacity-60"
+                  >
+                    <Check size={16} />
+                    {signupActionLoading ? "Approving..." : "Approve"}
+                  </motion.button>
+                </>
+              ) : (
+                <>
+                  <motion.button
+                    type="button"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    disabled={signupActionLoading}
+                    onClick={() => {
+                      setDecliningSignup(false);
+                      setDeclineReason("");
+                    }}
+                    className="flex h-12 flex-1 items-center justify-center rounded-2xl border border-zinc-700 text-sm font-bold text-zinc-300 transition hover:border-zinc-500 disabled:opacity-60"
+                  >
+                    Cancel
+                  </motion.button>
+                  <motion.button
+                    type="button"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    disabled={signupActionLoading}
+                    onClick={() => void declineSignupRequest()}
+                    className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-red-500 text-sm font-bold text-black transition hover:bg-red-400 disabled:opacity-60"
+                  >
+                    {signupActionLoading ? "Declining..." : "Confirm Decline"}
+                  </motion.button>
+                </>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    <AnimatePresence>
+      {enlargedIdCard && selectedSignupRequest?.idCardPhoto && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={() => setEnlargedIdCard(false)}
+          className="fixed inset-0 z-[320] flex items-center justify-center bg-black/90 p-6 backdrop-blur-xl"
+        >
+          <button
+            type="button"
+            onClick={() => setEnlargedIdCard(false)}
+            className="absolute right-6 top-6 rounded-xl border border-zinc-700 p-2 text-zinc-300 hover:border-red-500/40 hover:text-red-400"
+          >
+            <XIcon size={20} />
+          </button>
+          <motion.img
+            initial={{ scale: 0.95 }}
+            animate={{ scale: 1 }}
+            src={`${API_BASE_URL}${selectedSignupRequest.idCardPhoto}`}
+            alt="Uploaded ID card, full size"
+            onClick={(event) => event.stopPropagation()}
+            className="max-h-[88vh] max-w-[92vw] rounded-2xl object-contain"
+          />
+        </motion.div>
+      )}
+    </AnimatePresence>
+    </>
   );
 }

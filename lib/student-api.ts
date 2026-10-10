@@ -62,6 +62,11 @@ export const studentApi = {
       gearId: number;
       quantity: number;
     }[];
+    resourcesBooked?: {
+      resourceId: number;
+      name: string;
+      type: string;
+    }[];
     notes?: string;
   }) {
     return api.post<{
@@ -76,6 +81,11 @@ export const studentApi = {
     gearsBooked: {
       gearId: number;
       quantity: number;
+    }[];
+    resourcesBooked?: {
+      resourceId: number;
+      name: string;
+      type: string;
     }[];
     notes?: string;
   }) {

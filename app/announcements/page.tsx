@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { authFetch } from "@/lib/auth";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Megaphone,
@@ -18,66 +19,91 @@ type Announcement = {
   message: string;
   category: "Sport" | "General" | "Event";
   sport?: string;
+  staffOnly?: boolean;
   createdAt: string;
   expiresAt: string;
   unread: boolean;
 };
 
-const announcementData: Announcement[] = [
-  {
-    id: 1,
-    title: "Basketball court maintenance",
-    message:
-      "Court 2 will be unavailable tomorrow from 10 AM to 2 PM due to maintenance.",
-    category: "Sport",
-    sport: "Basketball",
-    createdAt: "10 min ago",
-    expiresAt: "2026-12-31T23:59:59",
-    unread: true,
-  },
-  {
-    id: 2,
-    title: "Badminton registration is open",
-    message:
-      "Registration is now open for the upcoming inter-college badminton tournament.",
-    category: "Event",
-    sport: "Badminton",
-    createdAt: "1 hour ago",
-    expiresAt: "2026-12-31T23:59:59",
-    unread: true,
-  },
-  {
-    id: 3,
-    title: "New football practice schedule",
-    message:
-      "The updated football practice schedule is now available for students.",
-    category: "Sport",
-    sport: "Football",
-    createdAt: "3 hours ago",
-    expiresAt: "2026-12-31T23:59:59",
-    unread: false,
-  },
-  {
-    id: 4,
-    title: "Equipment return reminder",
-    message:
-      "Students currently holding sports equipment are reminded to return it after use.",
-    category: "General",
-    createdAt: "Yesterday",
-    expiresAt: "2026-12-31T23:59:59",
-    unread: false,
-  },
-];
+type NoticeResponse = {
+  id: number;
+  title: string;
+  message: string;
+  type: string;
+  audience: string;
+  createdAt: string;
+  expiresAt: string | null;
+  isRead: boolean;
+  sport?: { name: string } | null;
+};
 
+function toCategory(type: string): Announcement["category"] {
+  const value = type.toLowerCase();
+  if (value === "sport") return "Sport";
+  if (value === "event") return "Event";
+  return "General";
+}
+
+function relativeTime(value: string) {
+  const diff = Date.now() - new Date(value).getTime();
+  if (Number.isNaN(diff)) return value;
+  const minutes = Math.round(diff / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? "Yesterday" : `${days} days ago`;
+}
+
+function toAnnouncement(notice: NoticeResponse): Announcement {
+  return {
+    id: notice.id,
+    title: notice.title,
+    message: notice.message,
+    category: toCategory(notice.type),
+    sport: notice.sport?.name,
+    createdAt: relativeTime(notice.createdAt),
+    expiresAt: notice.expiresAt ?? "9999-12-31T23:59:59",
+    unread: !notice.isRead,
+    staffOnly: notice.audience === "staff_admin",
+  };
+}
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 export default function AnnouncementsPage() {
-  const [announcements, setAnnouncements] =
-    useState(announcementData);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const response = await authFetch(`${API_BASE_URL}/notices`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Failed to load announcements");
+        const data: NoticeResponse[] = await response.json();
+        if (cancelled) return;
+        setAnnouncements(Array.isArray(data) ? data.map(toAnnouncement) : []);
+        setLoadError("");
+      } catch {
+        if (!cancelled) setLoadError("Unable to load announcements right now.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /*
-   * Hide announcements after their expiry time.
-   *
-   * This is currently frontend/mock behaviour.
-   * Later the backend Notice model will provide expiresAt.
+   * Hide announcements after their expiry time (expiresAt comes from the
+   * backend Notice model; notices without an expiry never expire).
    */
   const activeAnnouncements = useMemo(() => {
     const now = new Date();
@@ -88,7 +114,7 @@ export default function AnnouncementsPage() {
     );
   }, [announcements]);
 
-  const openAnnouncement = (id: number) => {
+  const openAnnouncement = async (id: number) => {
     setAnnouncements((current) =>
       current.map((announcement) =>
         announcement.id === id
@@ -99,6 +125,12 @@ export default function AnnouncementsPage() {
           : announcement
       )
     );
+
+    try {
+      await authFetch(`${API_BASE_URL}/notices/${id}/read`, { method: "POST" });
+    } catch (error) {
+      console.error("MARK ANNOUNCEMENT READ ERROR:", error);
+    }
   };
 
   return (
@@ -206,7 +238,17 @@ export default function AnnouncementsPage() {
               EMPTY STATE
           ================================================= */}
 
-          {activeAnnouncements.length === 0 && (
+          {loadError && (
+            <p role="alert" className="rounded-2xl border border-red-500/25 bg-red-500/[0.05] px-5 py-4 text-sm text-red-200">
+              {loadError}
+            </p>
+          )}
+
+          {loading && !loadError && (
+            <p className="text-sm text-zinc-500" aria-busy="true">Loading announcements…</p>
+          )}
+
+          {!loading && !loadError && activeAnnouncements.length === 0 && (
             <motion.div
               initial={{
                 opacity: 0,
@@ -421,6 +463,11 @@ function AnnouncementCard({
           <p className="mt-1 text-[11px] font-medium text-zinc-600">
             {announcement.sport ||
               announcement.category}
+            {announcement.staffOnly && (
+              <span className="ml-2 rounded-full border border-amber-400/25 bg-amber-400/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
+                Staff &amp; Admin
+              </span>
+            )}
           </p>
 
 

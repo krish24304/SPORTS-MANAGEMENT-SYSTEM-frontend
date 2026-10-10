@@ -1,4 +1,6 @@
 "use client";
+
+import { authFetch } from "@/lib/auth";
 import { useState, useEffect } from "react";
 
 export default function StaffSlotsPage() {
@@ -16,7 +18,7 @@ const [
 ] = useState<any[]>([]);
 useEffect(() => {
 
-  fetch(
+  authFetch(
     "http://localhost:5000/sports"
   )
     .then((res) => res.json())
@@ -29,7 +31,7 @@ useEffect(() => {
 
   if (!selectedSport) return;
 
-  fetch(
+  authFetch(
     `http://localhost:5000/slots/${selectedSport}`
   )
     .then((res) => res.json())
@@ -156,7 +158,7 @@ useEffect(() => {
   <button
     onClick={async () => {
 
-      await fetch(
+      await authFetch(
         `http://localhost:5000/slots/toggle/${slot.id}`,
         {
           method: "PUT",
@@ -164,7 +166,7 @@ useEffect(() => {
       );
 
       const response =
-        await fetch(
+        await authFetch(
           `http://localhost:5000/slots/${selectedSport}`
         );
 
@@ -198,7 +200,7 @@ useEffect(() => {
 
       if (!confirmed) return;
 
-      await fetch(
+      await authFetch(
         `http://localhost:5000/slots/${slot.id}`,
         {
           method: "DELETE",
@@ -206,7 +208,7 @@ useEffect(() => {
       );
 
       const response =
-        await fetch(
+        await authFetch(
           `http://localhost:5000/slots/${selectedSport}`
         );
 

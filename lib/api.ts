@@ -1,4 +1,6 @@
-﻿const API_BASE_URL =
+import { getAuthToken } from "./auth";
+
+const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 type RequestOptions = RequestInit & {
@@ -9,7 +11,7 @@ async function request<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { token, ...fetchOptions } = options;
+  const { token = getAuthToken() ?? undefined, ...fetchOptions } = options;
 
   const headers = new Headers(fetchOptions.headers);
 
@@ -21,11 +23,17 @@ async function request<T>(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...fetchOptions,
-    headers,
-    cache: "no-store",
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...fetchOptions,
+      headers,
+      cache: "no-store",
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Check your internet connection or try again shortly.");
+  }
 
   let data: unknown = null;
 
@@ -35,13 +43,17 @@ async function request<T>(
     data = null;
   }
 
+  if (response.status === 401) {
+    throw new Error("Please sign in to continue.");
+  }
+
   if (!response.ok) {
     const message =
       typeof data === "object" &&
       data !== null &&
       "message" in data &&
-      typeof (data as any).message === "string"
-        ? (data as any).message
+      typeof (data as { message?: unknown }).message === "string"
+        ? (data as { message: string }).message
         : `Request failed with status ${response.status}`;
 
     throw new Error(message);

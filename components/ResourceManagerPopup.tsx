@@ -7,12 +7,35 @@ import {
   CubeIcon,
   WrenchScrewdriverIcon,
 } from "@heroicons/react/24/outline";
+import { authFetch } from "@/lib/auth";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+
+type SportOverview = {
+  sport: {
+    name: string; resourceType: string; hasSlotSystem: boolean; slotDurationMinutes: number;
+    slotCapacity: number; hasTeamSlots: boolean; hasDynamicBooking: boolean;
+    underMaintenance: boolean; maintenanceMessage: string | null;
+  };
+  resources: { total: number; available: number; maintenance: number; underMaintenance: { id: number; name: string; message: string | null }[] };
+  gears: {
+    types: number; totalQuantity: number; availableQuantity: number; damagedQuantity: number; issuedQuantity: number;
+    lowStock: { id: number; name: string; available: number; total: number }[];
+  };
+  bookings: { total: number; active: number; today: number; pendingReturns: number; uniqueStudents: number };
+  slots: { upcoming: number; upcomingBooked: number };
+  upcomingReservations: { id: number; teamName: string; purpose: string | null; startDateTime: string; endDateTime: string }[];
+  maintenanceWindows: { id: number; scope: string; startAt: string; endAt: string; message: string | null; resourceName: string | null }[];
+};
+
+const formatOverviewDate = (value: string) =>
+  new Date(value).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 interface Props {
   sport: any;
   sports: any[];
   setSports: React.Dispatch<React.SetStateAction<any[]>>;
-  updateSport: (sport: any) => Promise<void> | void;
+  updateSport: (sport: any) => Promise<{ ok: boolean; sport?: any; message?: string } | void>;
   onClose: () => void;
 }
 
@@ -47,6 +70,9 @@ const [showTypeModal, setShowTypeModal] = useState(false);
 const [showAddGearModal, setShowAddGearModal] = useState(false);
 
 const [showOverviewModal, setShowOverviewModal] = useState(false);
+const [overview, setOverview] = useState<SportOverview | null>(null);
+const [overviewLoading, setOverviewLoading] = useState(true);
+const [overviewError, setOverviewError] = useState("");
 const [resourceName, setResourceName] = useState("");
 const [resourceQuantity, setResourceQuantity] = useState(1);
 const [autoGenerate, setAutoGenerate] = useState(true);
@@ -244,6 +270,37 @@ useEffect(() => {
 
 }, [resourceType, resourceQuantity, autoGenerate]);
 
+const gearSignature = gears.map((gear: any) => `${gear.id}:${gear.totalQuantity}:${gear.damagedQuantity}`).join("|");
+const resourceSignature = (sport.resourceUnits || []).map((unit: any) => `${unit.id}:${unit.status}`).join("|");
+
+// Overview card: real, per-sport numbers from the backend. Reloads whenever resources or gears change.
+useEffect(() => {
+  if (!sport?.id) return;
+  let cancelled = false;
+
+  (async () => {
+    try {
+      const response = await authFetch(`${API_BASE}/sports/${sport.id}/overview`);
+      const data = await response.json().catch(() => null);
+      if (cancelled) return;
+      if (!response.ok) {
+        setOverviewError(data?.message || "Could not load the overview");
+        return;
+      }
+      setOverview(data);
+      setOverviewError("");
+    } catch {
+      if (!cancelled) setOverviewError("Could not reach the server");
+    } finally {
+      if (!cancelled) setOverviewLoading(false);
+    }
+  })();
+
+  return () => {
+    cancelled = true;
+  };
+}, [sport?.id, gearSignature, resourceSignature]);
+
 useEffect(() => {
   return () => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -254,13 +311,6 @@ useEffect(() => {
 
 const maintenanceResources =
 sport.resourceUnits?.filter((r:any)=>r.status==="maintenance") || [];
-
-const damagedGears = 3;
-const maintenanceGears = 5;
-const totalGears = 46;
-
-const availableGears =
-totalGears-damagedGears-maintenanceGears;
 
 const showToast = (message: string, type: "success" | "error" = "success", actionLabel?: string, onAction?: () => void) => {
   if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -279,92 +329,147 @@ const persistSport = async (updatedSport: any) => {
   await updateSport(updatedSport);
 };
 
+const applyResourceUnits = (nextResourceUnits: any[]) => {
+  sport.resourceUnits = nextResourceUnits;
+  const updatedSport = { ...sport, resourceUnits: nextResourceUnits, resources: nextResourceUnits };
+  setSports((prev) => prev.map((item) => (item.id === sport.id ? updatedSport : item)));
+};
+
 const handleAddResource = async () => {
   if (!resourceName.trim() && !autoGenerate) return;
+  if (!sport?.id) return;
 
-  const baseName = resourceName.trim() || resourceType;
-  const newResources = [...(sport.resourceUnits || [])];
+  const quantity = autoGenerate ? Math.max(1, resourceQuantity) : 1;
 
-  if (autoGenerate) {
-    for (let i = 1; i <= resourceQuantity; i++) {
-      newResources.push({
-    id: crypto.randomUUID(),
-    name: `${baseName} ${i}`,
-    status: "active",
-});
+  try {
+    const response = await authFetch(`http://localhost:5000/sports/${sport.id}/resource-units`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resourceType, quantity }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      showToast(data?.message || "Failed to add resource", "error");
+      return;
     }
-  } else {
-    newResources.push({
-    id: crypto.randomUUID(),
-    name: baseName,
-    status: "active",
-});
+
+    let created: any[] = await response.json();
+
+    // A single custom name overrides the auto-generated one.
+    if (!autoGenerate && resourceName.trim() && created[0]) {
+      const renamed = await authFetch(`http://localhost:5000/resource-units/${created[0].id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: resourceName.trim() }),
+      });
+      if (renamed.ok) created = [await renamed.json()];
+    }
+
+    applyResourceUnits([...(sport.resourceUnits || []), ...created]);
+    setShowAddResourceModal(false);
+    setResourceName("");
+    setResourceQuantity(1);
+    showToast("Resource added successfully", "success");
+  } catch (err) {
+    console.error("ADD RESOURCE ERROR:", err);
+    showToast("Could not reach the server", "error");
   }
-
-  const updatedSport = {
-    ...sport,
-    resources: newResources,
-    resourceType,
-  };
-
-  await persistSport(updatedSport);
-  setShowAddResourceModal(false);
-  setResourceName("");
-  setResourceQuantity(1);
-  showToast("Resource added successfully", "success");
 };
 
 const handleRenameResource = async (index: number) => {
   const trimmed = editedResourceName.trim();
   if (!trimmed) return;
 
-  const updatedResources = [...(sport.resourceUnits || [])];
-  updatedResources[index] = {
-    ...updatedResources[index],
-    name: trimmed,
-  };
+  const target = (sport.resourceUnits || [])[index];
+  if (!target) return;
 
-  const updatedSport = {
-    ...sport,
-    resources: updatedResources,
-    resourceUnits: updatedResources,
-};
+  try {
+    const response = await authFetch(`http://localhost:5000/resource-units/${target.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed }),
+    });
 
-  await persistSport(updatedSport);
-  setEditingResourceIndex(null);
-  setEditedResourceName("");
-  showToast("Resource renamed", "success");
+    if (!response.ok) {
+      showToast("Failed to rename resource", "error");
+      return;
+    }
+
+    const updated = await response.json();
+    const updatedResources = [...(sport.resourceUnits || [])];
+    updatedResources[index] = updated;
+    applyResourceUnits(updatedResources);
+
+    setEditingResourceIndex(null);
+    setEditedResourceName("");
+    showToast("Resource renamed", "success");
+  } catch (err) {
+    console.error("RENAME RESOURCE ERROR:", err);
+    showToast("Could not reach the server", "error");
+  }
 };
 
 const handleDeleteResource = async (index: number) => {
   const deletedItem = (sport.resourceUnits || [])[index];
   if (!deletedItem) return;
 
-  const updatedResources = [...(sport.resourceUnits || [])].filter((_, itemIndex) => itemIndex !== index);
-  const updatedSport = {
-    ...sport,
-    resources: updatedResources,
-  };
+  try {
+    const response = await authFetch(`http://localhost:5000/resource-units/${deletedItem.id}`, {
+      method: "DELETE",
+    });
 
-  setPendingDelete({ item: deletedItem, index });
-  await persistSport(updatedSport);
-  showToast("Resource deleted", "error", "Undo", () => handleUndoDelete());
+    if (!response.ok) {
+      showToast("Failed to delete resource", "error");
+      return;
+    }
+
+    const updatedResources = (sport.resourceUnits || []).filter((_: any, itemIndex: number) => itemIndex !== index);
+    applyResourceUnits(updatedResources);
+
+    setPendingDelete({ item: deletedItem, index });
+    showToast("Resource deleted", "error", "Undo", () => handleUndoDelete());
+  } catch (err) {
+    console.error("DELETE RESOURCE ERROR:", err);
+    showToast("Could not reach the server", "error");
+  }
 };
 
 const handleUndoDelete = async () => {
   if (!pendingDelete) return;
 
-  const restoredResources = [...(sport.resourceUnits || [])];
-  restoredResources.splice(pendingDelete.index, 0, pendingDelete.item);
-  const updatedSport = {
-    ...sport,
-    resources: restoredResources,
-    resourceUnits: restoredResources,
-};
+  try {
+    const response = await authFetch(`http://localhost:5000/sports/${sport.id}/resource-units`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resourceType: pendingDelete.item.type || resourceType, quantity: 1 }),
+    });
 
-  await persistSport(updatedSport);
-  setPendingDelete(null);
-  showToast("Deletion undone", "success");
+    if (!response.ok) {
+      showToast("Failed to undo deletion", "error");
+      return;
+    }
+
+    let [recreated] = await response.json();
+    const renamed = await authFetch(`http://localhost:5000/resource-units/${recreated.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: pendingDelete.item.name }),
+    });
+    if (renamed.ok) recreated = await renamed.json();
+
+    // Note: the restored resource keeps its old name but gets a new id --
+    // the database assigns a fresh one, it cannot reuse the deleted row's id.
+    const restoredResources = [...(sport.resourceUnits || [])];
+    restoredResources.splice(pendingDelete.index, 0, recreated);
+    applyResourceUnits(restoredResources);
+
+    setPendingDelete(null);
+    showToast("Deletion undone", "success");
+  } catch (err) {
+    console.error("UNDO DELETE ERROR:", err);
+    showToast("Could not reach the server", "error");
+  }
 };
 
 const handleReorderResources = async (fromIndex: number, toIndex: number) => {
@@ -387,88 +492,151 @@ const handleChangeResourceType = async () => {
     ? (customResourceType.trim() || resourceType)
     : (resourceTypeDraft.trim() || resourceType);
   const count = Math.max(1, resourceCountDraft || sport.resourceUnits?.length || 1);
-  const nextResources = Array.from(
-    { length: count },
-    (_, index) => ({
-        id: crypto.randomUUID(),
-        name: `${nextType} ${index + 1}`,
-        status: "active",
-    })
-);
 
-  const updatedSport = {
-    ...sport,
-    resources: nextResources,
-    resourceType: nextType,
-    resourceUnits: nextResources,
-  };
+  try {
+    const result = await updateSport({ ...sport, resourceType: nextType, totalCourts: count });
 
-  await persistSport(updatedSport);
-  setResourceType(nextType);
-  setShowTypeModal(false);
-  showToast("Resource type updated", "success");
+    if (!result || result.ok === false) {
+      showToast(result?.message || "Failed to update resource type", "error");
+      return;
+    }
+
+    const updatedSport = result.sport ?? { ...sport, resourceType: nextType };
+    sport.resourceUnits = updatedSport.resourceUnits ?? updatedSport.resources ?? sport.resourceUnits;
+    setSports((prev) => prev.map((item) => (item.id === sport.id ? updatedSport : item)));
+    setResourceType(nextType);
+    setShowTypeModal(false);
+    showToast("Resource type updated", "success");
+  } catch (err) {
+    console.error("CHANGE RESOURCE TYPE ERROR:", err);
+    showToast("Could not reach the server", "error");
+  }
+};
+
+const applyGears = (nextGears: any[]) => {
+  setGears(nextGears);
+  sport.gears = nextGears;
+  setSports((prev) => prev.map((item) => (item.id === sport.id ? { ...item, gears: nextGears } : item)));
 };
 
 const handleAddGear = async () => {
   const trimmedName = gearName.trim();
-  if (!trimmedName) return;
+  if (!trimmedName || gearQuantity < 0) return;
+  if (!sport?.id) return;
 
-  const nextGears = [...gears];
-  if (editingGearIndex !== null) {
-    nextGears[editingGearIndex] = {
-      ...nextGears[editingGearIndex],
-      name: trimmedName,
-      quantity: gearQuantity,
-    };
-  } else {
-    nextGears.push({
-    id: crypto.randomUUID(),
-    name: trimmedName,
-    quantity: gearQuantity,
-});
+  const wasEditing = editingGearIndex !== null;
+
+  try {
+    let updatedGear: any;
+    let nextGears: any[];
+
+    if (wasEditing) {
+      const current = gears[editingGearIndex as number];
+      if (!current) return;
+
+      const response = await authFetch(`http://localhost:5000/gears/${current.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmedName,
+          description: current.description,
+          totalQuantity: gearQuantity,
+          damagedQuantity: current.damagedQuantity || 0,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        showToast(data?.message || "Failed to update gear", "error");
+        return;
+      }
+
+      updatedGear = await response.json();
+      nextGears = [...gears];
+      nextGears[editingGearIndex as number] = updatedGear;
+    } else {
+      const response = await authFetch("http://localhost:5000/gears", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmedName, sportId: sport.id, totalQuantity: gearQuantity }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        showToast(data?.message || "Failed to add gear", "error");
+        return;
+      }
+
+      updatedGear = await response.json();
+      nextGears = [...gears, updatedGear];
+    }
+
+    applyGears(nextGears);
+    setShowAddGearModal(false);
+    setGearName("");
+    setGearQuantity(1);
+    setEditingGearIndex(null);
+    showToast(wasEditing ? "Gear updated" : "Gear added", "success");
+  } catch (err) {
+    console.error("SAVE GEAR ERROR:", err);
+    showToast("Could not reach the server", "error");
   }
-
-  setGears(nextGears);
-  const updatedSport = {
-    ...sport,
-    resourceType,
-    gears: nextGears,
-};
-  await persistSport(updatedSport);
-  setShowAddGearModal(false);
-  setGearName("");
-  setGearQuantity(1);
-  setEditingGearIndex(null);
-  showToast(editingGearIndex !== null ? "Gear updated" : "Gear added", "success");
 };
 
 const handleGearQuantity = async (index: number, delta: number) => {
-  const nextGears = [...gears];
-  const currentGear = nextGears[index];
+  const currentGear = gears[index];
   if (!currentGear) return;
 
-  nextGears[index] = {
-    ...currentGear,
-    quantity: Math.max(0, currentGear.quantity + delta),
-  };
+  const nextQuantity = Math.max(0, (currentGear.totalQuantity ?? 0) + delta);
 
-  setGears(nextGears);
-  const updatedSport = {
-    ...sport,
-    gears: nextGears,
-  };
-  await persistSport(updatedSport);
+  try {
+    const response = await authFetch(`http://localhost:5000/gears/${currentGear.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: currentGear.name,
+        description: currentGear.description,
+        totalQuantity: nextQuantity,
+        damagedQuantity: currentGear.damagedQuantity || 0,
+      }),
+    });
+
+    if (!response.ok) {
+      showToast("Failed to update gear quantity", "error");
+      return;
+    }
+
+    const updated = await response.json();
+    const nextGears = [...gears];
+    nextGears[index] = updated;
+    applyGears(nextGears);
+  } catch (err) {
+    console.error("GEAR QUANTITY ERROR:", err);
+    showToast("Could not reach the server", "error");
+  }
 };
 
 const handleDeleteGear = async (index: number) => {
-  const nextGears = [...gears].filter((_, itemIndex) => itemIndex !== index);
-  setGears(nextGears);
-  const updatedSport = {
-    ...sport,
-    gears: nextGears,
-  };
-  await persistSport(updatedSport);
-  showToast("Gear deleted", "error");
+  const target = gears[index];
+  if (!target) return;
+
+  try {
+    const response = await authFetch(`http://localhost:5000/gears/${target.id}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      showToast("Failed to delete gear", "error");
+      return;
+    }
+
+    const nextGears = gears.filter((_: any, itemIndex: number) => itemIndex !== index);
+    applyGears(nextGears);
+    showToast("Gear deleted", "error");
+  } catch (err) {
+    console.error("DELETE GEAR ERROR:", err);
+    showToast("Could not reach the server", "error");
+  }
 };
 
 const getCardTransform = (
@@ -671,11 +839,11 @@ shadow-[0_0_60px_rgba(16,185,129,.15)]
                                 </button>
                               )}
                             </div>
-                            <p className="text-[9px] text-zinc-500">Available count</p>
+                            <p className="text-[9px] text-zinc-500">{gear.availableQuantity ?? gear.totalQuantity} available{gear.damagedQuantity ? `, ${gear.damagedQuantity} damaged` : ""}</p>
                           </div>
                           <div className="flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1">
                             <button onClick={() => void handleGearQuantity(index, -1)} className="h-5 w-5 rounded-full text-sm text-emerald-300 hover:bg-emerald-500/20">−</button>
-                            <span className="min-w-[1.5rem] text-center text-sm font-semibold">{gear.quantity}</span>
+                            <span className="min-w-[1.5rem] text-center text-sm font-semibold">{gear.totalQuantity}</span>
                             <button onClick={() => void handleGearQuantity(index, 1)} className="h-5 w-5 rounded-full text-sm text-emerald-300 hover:bg-emerald-500/20">+</button>
                           </div>
                         </div>
@@ -684,7 +852,7 @@ shadow-[0_0_60px_rgba(16,185,129,.15)]
                             onClick={() => {
                               setEditingGearIndex(index);
                               setGearName(gear.name);
-                              setGearQuantity(gear.quantity);
+                              setGearQuantity(gear.totalQuantity);
                               setShowAddGearModal(true);
                             }}
                             className="rounded-lg bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300"
@@ -817,14 +985,6 @@ selectedCard === 0
                         key={resource.id}
                         whileHover={{ y: -2, scale: 1.01, boxShadow: "0 0 20px rgba(59,130,246,0.16)" }}
                         transition={{ type: "spring", stiffness: 240, damping: 20 }}
-                        draggable
-                        onDragStart={() => setDraggedResourceIndex(index)}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={() => {
-                          if (draggedResourceIndex !== null && draggedResourceIndex !== index) {
-                            void handleReorderResources(draggedResourceIndex, index);
-                          }
-                        }}
                         className="group rounded-xl border border-zinc-800 bg-zinc-900/80 px-2 py-1.5 transition hover:border-sky-500"
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -970,50 +1130,78 @@ shadow-[0_0_70px_rgba(249,115,22,.15)]
     }
   `}
 >
-              <div className="rounded-xl border border-orange-500/20 bg-zinc-900/80 p-2">
-                <div className="flex items-center justify-between">
-                  <p className="font-semibold text-sm">Active Maintenance</p>
-                  <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] text-orange-300">{(sport.resourceUnits || []).filter((resource: any) => resource.status === "maintenance").length}</span>
-                </div>
-                
-                
-                
-                {(sport.resourceUnits || []).filter((resource: any) => resource.status === "maintenance").length ? (
-                  <div className="mt-2 space-y-1">
-                    {(sport.resourceUnits || []).filter((resource: any) => resource.status === "maintenance").slice(0, 2).map((resource: any) => (
-                      <p key={resource.id} className="text-xs text-zinc-400">• {resource.name}</p>
-                    ))}
+              {overviewLoading ? (
+                <div className="h-24 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900/70" />
+              ) : overviewError || !overview ? (
+                <p className="rounded-xl border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-300">
+                  {overviewError || "Overview unavailable"}
+                </p>
+              ) : (
+                <>
+                  <div className="rounded-xl border border-orange-500/20 bg-zinc-900/80 p-2">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-sm">Maintenance</p>
+                      <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] text-orange-300">
+                        {overview.resources.maintenance}
+                      </span>
+                    </div>
+                    {overview.sport.underMaintenance ? (
+                      <p className="mt-1 text-xs text-orange-300 line-clamp-2">
+                        Sport closed{overview.sport.maintenanceMessage ? `: ${overview.sport.maintenanceMessage}` : "."}
+                      </p>
+                    ) : overview.resources.underMaintenance.length ? (
+                      <div className="mt-1 space-y-1">
+                        {overview.resources.underMaintenance.slice(0, 2).map((resource) => (
+                          <p key={resource.id} className="text-xs text-zinc-400">• {resource.name}</p>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-xs text-zinc-500">Nothing under maintenance. Ready for play.</p>
+                    )}
                   </div>
-                  
-                ) : (
-                  <p className="mt-1 text-xs text-zinc-500 line-clamp-2">No maintenance scheduled. Everything is ready for play.</p>
-                  
-                )}
-              </div>
 
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-2">
-                <p className="font-semibold text-sm">Resources</p>
-                <p className="mt-1 text-xs text-zinc-500 line-clamp-2">
-  {resourceCount} active resources available for this sport.
-</p>
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-2">
+                    <p className="font-semibold text-sm">{overview.sport.resourceType}s</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {overview.resources.available} of {overview.resources.total} available
+                    </p>
+                  </div>
 
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-2">
+                    <p className="font-semibold text-sm">Gears</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {overview.gears.availableQuantity} of {overview.gears.totalQuantity} in stock
+                      {overview.gears.damagedQuantity ? `, ${overview.gears.damagedQuantity} damaged` : ""}
+                    </p>
+                  </div>
 
-              </div>
+                  <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-2">
+                    <p className="font-semibold text-sm text-sky-300">Bookings</p>
+                    <p className="mt-1 text-xs text-zinc-400">
+                      {overview.bookings.active} active, {overview.bookings.today} today, {overview.bookings.uniqueStudents} students
+                    </p>
+                  </div>
 
-              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-2">
-                <p className="font-semibold text-emerald-300">Upcoming Team Reservations</p>
-                <p className="mt-1 text-xs text-zinc-400 line-clamp-2">{sport.teamReservations?.length ? `${sport.teamReservations.length} upcoming reservations` : "No reservations scheduled yet."}</p>
-                
-              </div>
-                  <button
-    onClick={(e) => {
-        e.stopPropagation();
-        setShowOverviewModal(true)
-    }}
-    className="mt-2 self-end text-xs font-semibold text-orange-400 hover:underline"
->
-    Read More...
-</button>
+                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-2">
+                    <p className="font-semibold text-sm text-emerald-300">Upcoming Team Reservations</p>
+                    <p className="mt-1 text-xs text-zinc-400 line-clamp-2">
+                      {overview.upcomingReservations.length
+                        ? `${overview.upcomingReservations.length} upcoming, next: ${overview.upcomingReservations[0].teamName}`
+                        : "No reservations scheduled yet."}
+                    </p>
+                  </div>
+                </>
+              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowOverviewModal(true);
+                }}
+                disabled={!overview}
+                className="mt-2 self-end text-xs font-semibold text-orange-400 hover:underline disabled:opacity-40"
+              >
+                Read More...
+              </button>
             </div>
           </div>
         </div>
@@ -1138,6 +1326,112 @@ shadow-[0_0_70px_rgba(249,115,22,.15)]
           )}
         </AnimatePresence>
         
+        <AnimatePresence>
+          {showOverviewModal && overview && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[1000] flex items-center justify-center bg-black/70 backdrop-blur-md"
+              onClick={() => setShowOverviewModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                onClick={(event) => event.stopPropagation()}
+                className="w-[760px] max-w-[92vw] max-h-[85vh] overflow-y-auto rounded-[30px] border border-orange-500/20 bg-zinc-950 p-8"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h2 className="text-3xl font-black">{overview.sport.name} Overview</h2>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      {overview.sport.hasSlotSystem
+                        ? `Slot booking, ${overview.sport.slotDurationMinutes} min slots, ${overview.sport.slotCapacity} per slot`
+                        : "Open booking, no fixed slots"}
+                      {overview.sport.hasTeamSlots ? ", team reservations enabled" : ""}
+                    </p>
+                  </div>
+                  <button onClick={() => setShowOverviewModal(false)} className="text-2xl hover:text-red-400">✕</button>
+                </div>
+
+                {overview.sport.underMaintenance && (
+                  <p className="mt-4 rounded-xl border border-orange-500/30 bg-orange-500/10 p-3 text-sm text-orange-300">
+                    This sport is closed for maintenance{overview.sport.maintenanceMessage ? `: ${overview.sport.maintenanceMessage}` : "."}
+                  </p>
+                )}
+
+                <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+                  {[
+                    { label: overview.sport.resourceType + "s", value: overview.resources.total, note: `${overview.resources.available} available` },
+                    { label: "Gear stock", value: overview.gears.availableQuantity, note: `of ${overview.gears.totalQuantity}, ${overview.gears.issuedQuantity} issued` },
+                    { label: "Active bookings", value: overview.bookings.active, note: `${overview.bookings.today} today` },
+                    { label: "Students", value: overview.bookings.uniqueStudents, note: `${overview.bookings.total} bookings overall` },
+                    { label: "Upcoming slots", value: overview.slots.upcoming, note: `${overview.slots.upcomingBooked} booked` },
+                    { label: "Pending returns", value: overview.bookings.pendingReturns, note: "waiting for staff" },
+                    { label: "Damaged gear", value: overview.gears.damagedQuantity, note: `${overview.gears.types} gear types` },
+                    { label: "Under maintenance", value: overview.resources.maintenance, note: `${overview.maintenanceWindows.length} scheduled` },
+                  ].map((tile) => (
+                    <div key={tile.label} className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-zinc-500">{tile.label}</p>
+                      <p className="mt-1 text-2xl font-black">{tile.value}</p>
+                      <p className="text-xs text-zinc-500">{tile.note}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+                    <p className="font-semibold text-emerald-300">Upcoming team reservations</p>
+                    {overview.upcomingReservations.length ? (
+                      <ul className="mt-2 space-y-2 text-sm text-zinc-300">
+                        {overview.upcomingReservations.map((reservation) => (
+                          <li key={reservation.id}>
+                            <span className="font-semibold">{reservation.teamName}</span>
+                            <span className="block text-xs text-zinc-500">
+                              {formatOverviewDate(reservation.startDateTime)} to {formatOverviewDate(reservation.endDateTime)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-sm text-zinc-500">No reservations scheduled yet.</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-orange-500/20 bg-orange-500/10 p-4">
+                    <p className="font-semibold text-orange-300">Maintenance schedule</p>
+                    {overview.maintenanceWindows.length ? (
+                      <ul className="mt-2 space-y-2 text-sm text-zinc-300">
+                        {overview.maintenanceWindows.map((window) => (
+                          <li key={window.id}>
+                            <span className="font-semibold">{window.resourceName || "Entire sport"}</span>
+                            <span className="block text-xs text-zinc-500">
+                              {formatOverviewDate(window.startAt)} to {formatOverviewDate(window.endAt)}
+                              {window.message ? `, ${window.message}` : ""}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-sm text-zinc-500">No maintenance scheduled.</p>
+                    )}
+                  </div>
+                </div>
+
+                {overview.gears.lowStock.length > 0 && (
+                  <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 p-4">
+                    <p className="font-semibold text-red-300">Low stock gear</p>
+                    <p className="mt-1 text-sm text-zinc-300">
+                      {overview.gears.lowStock.map((gear) => `${gear.name} (${gear.available}/${gear.total})`).join(", ")}
+                    </p>
+                  </div>
+                )}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
           {viewItem && (
   <motion.div
     initial={{ opacity: 0 }}

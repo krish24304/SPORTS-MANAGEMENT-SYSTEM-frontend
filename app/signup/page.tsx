@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function SignupPage() {
   const [idCardFile, setIdCardFile] = useState<File | null>(null);
@@ -11,13 +12,18 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [collegeId, setCollegeId] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("student");
+  const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const handleSignup = async () => {
     if (!name || !email || !collegeId || !password) {
-      alert("Fill all fields");
+      setNotice({ type: "error", message: "Please fill all fields" });
       return;
     }
+
+    setSubmitting(true);
+    setNotice(null);
 
     try {
       const formData = new FormData();
@@ -26,7 +32,6 @@ export default function SignupPage() {
       formData.append("email", email);
       formData.append("collegeId", collegeId);
       formData.append("password", password);
-      formData.append("role", role);
 
       if (idCardFile) {
         formData.append("profilePicture", idCardFile);
@@ -40,14 +45,19 @@ export default function SignupPage() {
       const data = await response.json();
 
       if (response.ok) {
-        alert("Signup Successful");
-        router.push("/login");
+        setNotice({
+          type: "success",
+          message: data.message || "Signup request submitted. A staff or admin member will review it before you can log in.",
+        });
+        setTimeout(() => router.push("/login"), 2200);
       } else {
-        alert(data.message || "Signup Failed");
+        setNotice({ type: "error", message: data.message || "Signup Failed" });
       }
     } catch (error) {
       console.log(error);
-      alert("Server Error");
+      setNotice({ type: "error", message: "Could not reach the server. Please try again." });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -81,24 +91,23 @@ export default function SignupPage() {
             className="w-full p-4 bg-black border border-zinc-700 rounded-xl outline-none"
           />
 
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full p-4 bg-black border border-zinc-700 rounded-xl outline-none"
-          />
-
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full p-4 bg-black border border-zinc-700 rounded-xl outline-none"
-          >
-            <option value="">Select Role</option>
-            <option value="student">Student</option>
-            <option value="staff">Staff</option>
-            <option value="admin">Admin</option>
-          </select>
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full p-4 pr-12 bg-black border border-zinc-700 rounded-xl outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+            </button>
+          </div>
 
           <input
             type="file"
@@ -111,11 +120,25 @@ export default function SignupPage() {
             className="w-full bg-zinc-900 border border-zinc-700 rounded-2xl px-5 py-4"
           />
 
+          {notice && (
+            <div
+              role="alert"
+              className={`rounded-xl border px-5 py-4 text-sm font-medium ${
+                notice.type === "success"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-red-500/30 bg-red-500/10 text-red-300"
+              }`}
+            >
+              {notice.message}
+            </div>
+          )}
+
           <button
             onClick={handleSignup}
-            className="w-full bg-green-600 hover:bg-green-500 transition py-4 rounded-xl font-semibold"
+            disabled={submitting}
+            className="w-full bg-green-600 hover:bg-green-500 transition py-4 rounded-xl font-semibold disabled:opacity-60"
           >
-            Create Account
+            {submitting ? "Submitting..." : "Create Account"}
           </button>
         </div>
       </div>
