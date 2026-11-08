@@ -1,13 +1,26 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import Link from "next/link";
-import Navbar from "@/components/layout/Navbar";
 import { useEffect, useState } from "react";
 
-export default function HomePage() {
-  const [sports, setSports] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+// Only the fields this page shows from GET /sports.
+interface HomeSport {
+  id: number;
+  name: string;
+  availableCourts?: number;
+  totalCourts?: number;
+  gears?: unknown[];
+  slots?: { startTime: string; endTime: string }[];
+}
 
+function formatSlotTime(value: string) {
+  return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+export default function HomePage() {
+  const [sports, setSports] = useState<HomeSport[]>([]);
+  const [loading, setLoading] = useState(true);
   // ============================================================
   // FETCH SPORTS
   // ============================================================
@@ -17,7 +30,7 @@ export default function HomePage() {
 
     const fetchSports = async () => {
       try {
-        const response = await fetch("http://localhost:5000/sports", {
+        const response = await fetch(`${API_BASE_URL}/sports`, {
           cache: "no-store",
         });
 
@@ -52,9 +65,6 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-black text-white">
-      {/* NAVBAR */}
-      <Navbar onOpenMobileSidebar={() => {}} />
-
       {/* ============================================================
           HERO
       ============================================================ */}
@@ -187,16 +197,16 @@ export default function HomePage() {
                   {/* SLOT PREVIEW */}
 
                   <div className="mt-8">
-                    {sport.slots?.length > 0 ? (
+                    {sport.slots && sport.slots.length > 0 ? (
                       <div className="bg-black border border-zinc-800 rounded-2xl p-4">
                         <p className="text-sm text-zinc-400 mb-2">
                           NEXT SLOT
                         </p>
 
                         <p className="font-bold text-lg">
-                          {sport.slots[0].startTime}
+                          {formatSlotTime(sport.slots[0].startTime)}
                           {" - "}
-                          {sport.slots[0].endTime}
+                          {formatSlotTime(sport.slots[0].endTime)}
                         </p>
                       </div>
                     ) : (

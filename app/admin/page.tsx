@@ -1,31 +1,26 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import { authFetch } from "@/lib/auth";
 
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
 import AnonymousRequestsModal from "@/components/suggestions/AnonymousRequestsModal";
+import DamagedGearModal from "@/components/staff/DamagedGearModal";
+import TeamReservationBadge from "@/components/ui/TeamReservationBadge";
 import { useSuggestionUnread } from "@/lib/suggestions";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faGear } from "@fortawesome/free-solid-svg-icons";
 import ResourceManagerPopup from "@/components/ResourceManagerPopup";
 import { AnimatePresence } from "framer-motion";
 // import motion from "framer-motion";
-import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import {
-    createResources,
-    renameResourceUnit,
-    deleteResourceUnit,
-} from "../resourceApi";
-import {
-ClockIcon,
-WrenchScrewdriverIcon,
-BuildingOffice2Icon,
-UsersIcon,
-PlusCircleIcon,
-PencilSquareIcon,
-TrashIcon
- ,PlusIcon
+  ClockIcon,
+  WrenchScrewdriverIcon,
+  BuildingOffice2Icon,
+  UsersIcon,
+  PlusCircleIcon,
+  PencilSquareIcon,
+  TrashIcon,
 } from "@heroicons/react/24/outline";
 import { motion } from "framer-motion";
 
@@ -41,6 +36,11 @@ export default function AdminSportsPage() {
     students: number;
     resources: number;
     bookings: number;
+    activeBookings?: number;
+    todaysBookings?: number;
+    gearIssued?: number;
+    damagedGear?: number;
+    freeResources?: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCreateSport, setShowCreateSport] =
@@ -108,6 +108,33 @@ const [newResourceName, setNewResourceName] =
 
   const [search, setSearch] = useState("");
   const [showRequests, setShowRequests] = useState(false);
+  const [showAnnouncement, setShowAnnouncement] = useState(false);
+  const [showCreateAnnouncement, setShowCreateAnnouncement] = useState(false);
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementMessage, setAnnouncementMessage] = useState("");
+  const [announcementAudience, setAnnouncementAudience] = useState("everyone");
+  const [announcementType, setAnnouncementType] = useState("announcement");
+  const [announcementSportId, setAnnouncementSportId] = useState("");
+  const [announcementExpiry, setAnnouncementExpiry] = useState("");
+  const [announcementError, setAnnouncementError] = useState("");
+  const [announcementSubmitting, setAnnouncementSubmitting] = useState(false);
+  const [loadErrors, setLoadErrors] = useState<Record<string, string | undefined>>({});
+
+  const [showAddStaff, setShowAddStaff] = useState(false);
+  const [staffList, setStaffList] = useState<{ id: number; name: string; email: string; rollNo: string | null }[]>([]);
+  const [staffListError, setStaffListError] = useState("");
+  const [removingStaffId, setRemovingStaffId] = useState<number | null>(null);
+  const [staffName, setStaffName] = useState("");
+  const [staffEmail, setStaffEmail] = useState("");
+  const [staffPhone, setStaffPhone] = useState("");
+  const [staffId, setStaffId] = useState("");
+  const [staffPassword, setStaffPassword] = useState("");
+  const [staffError, setStaffError] = useState("");
+  const [staffSubmitting, setStaffSubmitting] = useState(false);
+  const [staffCreatedMessage, setStaffCreatedMessage] = useState("");
+  const [showStaffPassword, setShowStaffPassword] = useState(false);
+  const [showDamagedGear, setShowDamagedGear] = useState(false);
   const unreadRequests = useSuggestionUnread();
   const [showManageSport, setShowManageSport] = useState(false);
 
@@ -183,7 +210,7 @@ const [advanceBookingDays,setAdvanceBookingDays]=useState(7);
 const fetchSports = async () => {
     try {
       const response = await authFetch(
-        "http://localhost:5000/sports"
+        `${API_BASE_URL}/sports`
       );
 
       const data = await response.json();
@@ -218,7 +245,7 @@ const fetchSports = async () => {
   try {
 
     const response = await authFetch(
-      "http://localhost:5000/sports",
+      `${API_BASE_URL}/sports`,
       {
         method: "POST",
         headers: {
@@ -278,16 +305,127 @@ const resetCreateSport = () => {
 
   useEffect(() => {
     fetchSports();
-    authFetch("http://localhost:5000/dashboard/stats")
+    authFetch(`${API_BASE_URL}/dashboard/stats`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setDashStats(data))
       .catch(() => setDashStats(null));
+
+    authFetch(`${API_BASE_URL}/notices`)
+      .then(async (res) => {
+        if (!res.ok) {
+          setLoadErrors((prev) => ({ ...prev, notices: "Could not load announcements." }));
+          return;
+        }
+        const data = await res.json();
+        setAnnouncements(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setLoadErrors((prev) => ({ ...prev, notices: "Could not reach the server." })));
   }, []);
+
+  const loadStaffList = async () => {
+    try {
+      const res = await authFetch(`${API_BASE_URL}/staff`);
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setStaffListError(data?.message || "Could not load staff accounts.");
+        return;
+      }
+      setStaffList(Array.isArray(data) ? data : []);
+      setStaffListError("");
+    } catch {
+      setStaffListError("Could not reach the server.");
+    }
+  };
+
+  const refreshDashStats = () => {
+    authFetch(`${API_BASE_URL}/dashboard/stats`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setDashStats(d))
+      .catch(() => {});
+  };
+
+  const removeStaff = async (member: { id: number; name: string }) => {
+    if (removingStaffId) return;
+    if (!window.confirm(`Remove ${member.name}? They will be signed out and can no longer log in.`)) return;
+
+    setRemovingStaffId(member.id);
+    try {
+      const res = await authFetch(`${API_BASE_URL}/staff/${member.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setStaffListError(data?.message || "Could not remove the staff account.");
+        return;
+      }
+      setStaffList((prev) => prev.filter((s) => s.id !== member.id));
+      setStaffListError("");
+      refreshDashStats();
+    } catch {
+      setStaffListError("Could not reach the server.");
+    } finally {
+      setRemovingStaffId(null);
+    }
+  };
+
+  const resetAddStaff = () => {
+    setShowAddStaff(false);
+    setStaffName("");
+    setStaffEmail("");
+    setStaffPhone("");
+    setStaffId("");
+    setStaffPassword("");
+    setShowStaffPassword(false);
+    setStaffError("");
+  };
+
+  const createStaff = async () => {
+    if (staffSubmitting) return;
+
+    const name = staffName.trim();
+    const email = staffEmail.trim();
+
+    if (!name) return setStaffError("Please enter the staff member's name.");
+    if (!email) return setStaffError("Please enter an email address.");
+    if (staffPassword.length < 8) return setStaffError("Password must be at least 8 characters.");
+
+    setStaffError("");
+    setStaffSubmitting(true);
+
+    try {
+      const res = await authFetch(`${API_BASE_URL}/staff`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          email,
+          phone: staffPhone.trim(),
+          staffId: staffId.trim(),
+          password: staffPassword,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setStaffError(data?.message || "Could not create the staff account.");
+        return;
+      }
+
+      resetAddStaff();
+      setStaffCreatedMessage(`Staff account created for ${name}`);
+      setTimeout(() => setStaffCreatedMessage(""), 3500);
+
+      refreshDashStats();
+    } catch (err) {
+      console.error("CREATE STAFF ERROR:", err);
+      setStaffError("Could not reach the server. Check that the backend is running and try again.");
+    } finally {
+      setStaffSubmitting(false);
+    }
+  };
 
 const deleteSport = async (id: string) => {
 
   const confirmed = window.confirm(
-    "Delete this sport?"
+    "Delete this sport? Its slots, gear, resources and booking history will be deleted too. This cannot be undone."
   );
 
   if (!confirmed) return;
@@ -295,20 +433,23 @@ const deleteSport = async (id: string) => {
   try {
 
     const response = await authFetch(
-  `http://localhost:5000/sports/${id}`,
+  `${API_BASE_URL}/sports/${id}`,
   {
     method: "DELETE",
   }
 );
 
 if (!response.ok) {
-  throw new Error("Failed to delete sport");
+  const data = await response.json().catch(() => null);
+  window.alert(data?.message || "Could not delete the sport.");
+  return;
 }
 
 await fetchSports();
 
   } catch (error) {
-    console.log(error);
+    console.error("DELETE SPORT ERROR:", error);
+    window.alert("Could not reach the server. Check that the backend is running and try again.");
   }
 
 };
@@ -318,7 +459,7 @@ try{
 
 const response = await authFetch(
 
-`http://localhost:5000/sports/${updatedSport.id}`,
+`${API_BASE_URL}/sports/${updatedSport.id}`,
 
 {
 
@@ -566,7 +707,7 @@ const handleCreateReservation = async () => {
 
   for (const day of days) {
     try {
-      const response = await authFetch("http://localhost:5000/team-reservations", {
+      const response = await authFetch(`${API_BASE_URL}/team-reservations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -618,7 +759,7 @@ const handleCreateReservation = async () => {
 
 const refreshSportDetail = async (sportId: number) => {
   try {
-    const response = await authFetch("http://localhost:5000/sports");
+    const response = await authFetch(`${API_BASE_URL}/sports`);
     const data = await response.json();
     if (Array.isArray(data)) {
       setSports(data);
@@ -632,7 +773,7 @@ const refreshSportDetail = async (sportId: number) => {
 
 const fetchMaintenanceWindows = async (sportId: number) => {
   try {
-    const response = await authFetch(`http://localhost:5000/sports/${sportId}/maintenance-windows`);
+    const response = await authFetch(`${API_BASE_URL}/sports/${sportId}/maintenance-windows`);
     if (!response.ok) {
       setActiveMaintenanceWindows([]);
       return;
@@ -679,7 +820,7 @@ const handleSaveMaintenance = async (force: boolean) => {
   setMaintenanceSaving(true);
 
   try {
-    const response = await authFetch(`http://localhost:5000/sports/${selectedSport.id}/maintenance-windows`, {
+    const response = await authFetch(`${API_BASE_URL}/sports/${selectedSport.id}/maintenance-windows`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -731,7 +872,7 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
   if (!selectedSport?.id) return;
 
   try {
-    const response = await authFetch(`http://localhost:5000/sports/${selectedSport.id}/maintenance-windows/${windowId}/end`, {
+    const response = await authFetch(`${API_BASE_URL}/sports/${selectedSport.id}/maintenance-windows/${windowId}/end`, {
       method: "POST",
     });
 
@@ -875,9 +1016,27 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
 
         </div>
 
+        {/* LIVE ANALYTICS */}
+
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-10">
+          {[
+            { label: "Active bookings", hint: "Booked or waiting for return", value: dashStats?.activeBookings, color: "text-emerald-400" },
+            { label: "Gear issued", hint: "Items with students now", value: dashStats?.gearIssued, color: "text-sky-400" },
+            { label: "Damaged gear", hint: "Out of stock until repaired", value: dashStats?.damagedGear, color: "text-red-400" },
+            { label: "Free resources", hint: "Courts/tables free right now", value: dashStats?.freeResources, color: "text-violet-400" },
+            { label: "Today's usage", hint: "Bookings made today", value: dashStats?.todaysBookings, color: "text-amber-400" },
+          ].map((card) => (
+            <div key={card.label} className="bg-zinc-900/70 rounded-3xl p-5 border border-zinc-800">
+              <p className="text-zinc-400 text-sm font-semibold">{card.label}</p>
+              <p className={`${card.color} font-black text-3xl mt-2`}>{card.value ?? "—"}</p>
+              <p className="text-zinc-500 text-xs mt-1">{card.hint}</p>
+            </div>
+          ))}
+        </div>
+
         {/* QUICK ACTIONS */}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-5 mb-10">
 
 <button
   onClick={() => setShowCreateSport(true)}
@@ -890,7 +1049,10 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
     </p>
   </button>
 
-  <button className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-6 hover:border-sky-500 transition-all hover:-translate-y-1">
+  <button
+    onClick={() => { setShowAddStaff(true); loadStaffList(); }}
+    className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-6 hover:border-sky-500 transition-all hover:-translate-y-1"
+  >
     <div className="text-4xl mb-4">👥</div>
     <h3 className="font-black text-xl">Add Staff</h3>
     <p className="text-zinc-500 text-sm mt-2">
@@ -898,7 +1060,21 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
     </p>
   </button>
 
-  <button className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-6 hover:border-yellow-500 transition-all hover:-translate-y-1">
+  <button
+    onClick={() => setShowDamagedGear(true)}
+    className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-6 hover:border-red-500 transition-all hover:-translate-y-1"
+  >
+    <div className="text-4xl mb-4">🛠️</div>
+    <h3 className="font-black text-xl">Damaged Gear</h3>
+    <p className="text-zinc-500 text-sm mt-2">
+      View &amp; clear damage records
+    </p>
+  </button>
+
+  <button
+    onClick={() => setShowAnnouncement(true)}
+    className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-6 hover:border-yellow-500 transition-all hover:-translate-y-1"
+  >
     <div className="text-4xl mb-4">📢</div>
     <h3 className="font-black text-xl">Announcement</h3>
     <p className="text-zinc-500 text-sm mt-2">
@@ -1054,16 +1230,7 @@ placeholder="Search sports, resources, staff..."
 
                     <div className="flex justify-between items-center">
                       <span className="text-zinc-400">Team Booking</span>
-                      <span className="
-                        px-3 py-1
-                        rounded-full
-                        bg-sky-500/10
-                        text-sky-400
-                        border border-sky-500/20
-                        text-sm font-semibold
-                      ">
-                        {sport.teamReservationEnabled ? "Enabled" : "Disabled"}
-                      </span>
+                      <TeamReservationBadge summary={sport.teamReservation} />
                     </div>
 
                     <div className="flex justify-between items-center">
@@ -5501,7 +5668,1255 @@ animate-pulse
 </div>
 )}
 
+{showAnnouncement && (
+
+<div
+className="
+fixed
+inset-0
+z-[250]
+bg-black/80
+backdrop-blur-xl
+flex
+items-center
+justify-center
+"
+>
+
+<motion.div
+
+initial={{ opacity:0, scale:.92, y:40 }}
+
+animate={{ opacity:1, scale:1, y:0 }}
+
+exit={{ opacity:0 }}
+
+transition={{
+duration:.35,
+ease:[0.16,1,0.3,1]
+}}
+
+className="
+relative
+w-[900px]
+max-h-[90vh]
+overflow-hidden
+rounded-[38px]
+bg-gradient-to-br
+from-zinc-950
+via-black
+to-zinc-950
+border
+border-orange-500/20
+shadow-[0_0_80px_rgba(249,115,22,.18)]
+"
+
+>
+
+<div
+className="
+absolute
+inset-0
+bg-gradient-to-br
+from-orange-500/5
+via-transparent
+to-yellow-500/5
+pointer-events-none
+"
+/>
+
+<button
+type="button"
+onClick={()=>setShowAnnouncement(false)}
+
+className="
+absolute
+top-6
+right-6
+w-14
+h-14
+rounded-2xl
+bg-zinc-900
+border
+border-zinc-800
+hover:bg-red-500/10
+hover:border-red-500/40
+hover:rotate-90
+transition-all
+duration-300
+"
+
+>
+
+✕
+
+</button>
+
+<div className="px-10 pt-10">
+
+<div className="flex justify-between items-center">
+
+<div>
+
+<h2
+className="
+text-5xl
+font-black
+bg-gradient-to-r
+from-yellow-300
+via-orange-400
+to-orange-500
+bg-clip-text
+text-transparent
+"
+>
+
+📢 Announcements
+
+</h2>
+
+<p className="text-zinc-500 mt-2">
+
+Manage every announcement from here
+
+</p>
+
+</div>
+
+<button
+type="button"
+onClick={()=>setShowCreateAnnouncement(true)}
+
+className="
+group
+relative
+overflow-hidden
+px-8
+h-14
+rounded-2xl
+font-black
+bg-gradient-to-r
+from-yellow-400
+via-orange-500
+to-orange-600
+text-black
+hover:scale-105
+transition-all
+shadow-[0_0_30px_rgba(249,115,22,.35)]
+"
+
+>
+
+<div
+className="
+absolute
+inset-0
+-translate-x-full
+group-hover:translate-x-full
+transition-transform
+duration-1000
+bg-gradient-to-r
+from-transparent
+via-white/20
+to-transparent
+"
+/>
+
+<span className="relative z-10">
+
+＋ New Announcement
+
+</span>
+
+</button>
+
+</div>
+
+</div>
+
+<div
+className="
+mt-10
+px-8
+pb-8
+space-y-6
+overflow-y-auto
+max-h-[65vh]
+"
+>
+
+{announcements.length===0 ? (
+
+<div className="text-center py-20">
+
+<div className="text-7xl">
+
+📢
+
+</div>
+
+<h3 className="text-3xl font-black mt-6">
+
+{loadErrors.notices ? "Couldn't load announcements" : "No announcements yet"}
+
+</h3>
+
+<p className="text-zinc-500 mt-2">
+
+Create your first announcement.
+
+</p>
+
+</div>
+
+) : (
+  announcements.map((item,index)=>(
+
+<motion.div
+
+key={item.id}
+
+initial={{
+opacity:0,
+y:30
+}}
+
+animate={{
+opacity:1,
+y:0
+}}
+
+transition={{
+delay:index*.08
+}}
+
+className="
+group
+relative
+overflow-hidden
+
+rounded-[34px]
+
+border
+border-orange-500/15
+
+bg-gradient-to-br
+from-zinc-900
+to-zinc-950
+
+p-8
+
+hover:border-orange-400/40
+
+hover:-translate-y-1
+
+hover:shadow-[0_0_40px_rgba(249,115,22,.15)]
+
+transition-all
+duration-300
+"
+
+>
+
+<div
+className="
+absolute
+inset-0
+
+opacity-0
+
+group-hover:opacity-100
+
+transition
+
+bg-gradient-to-r
+from-orange-500/5
+via-transparent
+to-yellow-500/5
+"
+/>
+
+<div className="relative flex justify-between">
+
+<div className="flex-1">
+
+<div className="flex items-center gap-5">
+
+<div
+className="
+w-16
+h-16
+
+rounded-[22px]
+
+bg-gradient-to-br
+from-orange-500/20
+to-yellow-500/20
+
+border
+border-orange-500/20
+
+flex
+items-center
+justify-center
+
+shadow-[0_0_30px_rgba(249,115,22,.15)]
+"
+>
+
+<span
+className="
+text-3xl
+
+drop-shadow-[0_0_14px_rgba(249,115,22,.8)]
+"
+>
+
+📣
+
+</span>
+
+</div>
+
+<div>
+
+<h3
+className="
+text-3xl
+font-black
+tracking-tight
+
+group-hover:text-orange-300
+
+transition-colors
+duration-300
+"
+>
+
+{item.title}
+
+</h3>
+
+<p
+className="
+text-zinc-500
+mt-1
+"
+>
+
+Announcement
+
+</p>
+
+</div>
+
+</div>
+
+<p
+className="
+mt-8
+
+text-[17px]
+
+leading-8
+
+text-zinc-300
+"
+>
+
+{item.message}
+
+</p>
+
+<div
+className="
+flex
+flex-wrap
+
+gap-4
+
+mt-8
+"
+>
+
+<div
+className="
+px-5
+py-3
+
+rounded-full
+
+bg-orange-500/10
+
+border
+border-orange-500/20
+
+text-orange-300
+
+font-bold
+
+text-sm
+"
+>
+
+👁 Audience : {item.audience === "staff_admin" ? "Staff & Admin" : "Everyone"}
+
+</div>
+
+<div
+className="
+px-5
+py-3
+
+rounded-full
+
+bg-zinc-800
+
+border
+border-zinc-700
+
+text-zinc-400
+
+text-sm
+font-semibold
+"
+>
+
+🕒 {new Date(item.createdAt).toLocaleString()}
+{item.expiresAt ? ` · expires ${new Date(item.expiresAt).toLocaleString()}` : ""}
+{item.sport?.name ? ` · ${item.sport.name}` : ""}
+
+</div>
+
+</div>
+
+</div>
+
+<div className="pl-8">
+
+<button
+
+onClick={async () => {
+  if (!window.confirm(`Delete "${item.title}"? Everyone will stop seeing it.`)) return;
+  try {
+    const res = await authFetch(`${API_BASE_URL}/notices/${item.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      alert(data?.message || 'Could not delete the announcement.');
+      return;
+    }
+    setAnnouncements((prev) => prev.filter((a) => a.id !== item.id));
+  } catch (err) {
+    console.error('Failed to delete announcement', err);
+    alert('Could not reach the server. Check that the backend is running and try again.');
+  }
+}}
+
+className="
+group
+
+relative
+
+w-16
+h-16
+
+rounded-[22px]
+
+bg-red-500/10
+
+border
+border-red-500/15
+
+text-red-400
+
+hover:bg-red-500
+
+hover:text-white
+
+hover:scale-110
+
+hover:rotate-6
+
+transition-all
+duration-300
+"
+
+>
+
+<div
+className="
+absolute
+inset-0
+
+rounded-[22px]
+
+bg-gradient-to-br
+from-white/10
+to-transparent
+
+opacity-0
+
+group-hover:opacity-100
+
+transition
+"
+/>
+
+<span
+className="
+relative
+
+text-2xl
+"
+>
+
+🗑
+
+</span>
+
+</button>
+
+</div>
+
+</div>
+
+</motion.div>
+
+))
+
+)}
+
+</div>
+
+{/* Bottom Glow */}
+
+<div
+className="
+absolute
+bottom-0
+left-1/2
+-translate-x-1/2
+w-[70%]
+h-16
+bg-orange-500/20
+blur-3xl
+pointer-events-none
+animate-pulse
+"
+/>
+
+</motion.div>
+
+</div>
+
+)}
+
+{/* ================= CREATE ANNOUNCEMENT ================= */}
+
+{showCreateAnnouncement && (
+
+<div
+className="
+fixed
+inset-0
+z-[260]
+bg-black/85
+backdrop-blur-xl
+flex
+items-center
+justify-center
+"
+>
+
+<motion.div
+
+initial={{opacity:0,scale:.9,y:40}}
+
+animate={{opacity:1,scale:1,y:0}}
+
+exit={{opacity:0,scale:.9,y:20}}
+
+transition={{
+duration:.35,
+ease:[0.16,1,0.3,1]
+}}
+
+className="
+relative
+
+w-[760px]
+
+rounded-[36px]
+
+overflow-hidden
+
+bg-gradient-to-br
+from-zinc-950
+via-black
+to-zinc-950
+
+border
+border-orange-500/20
+
+shadow-[0_0_80px_rgba(249,115,22,.20)]
+"
+
+>
+
+<div
+className="
+absolute
+inset-0
+pointer-events-none
+bg-gradient-to-br
+from-orange-500/5
+via-transparent
+to-yellow-500/5
+"
+/>
+
+<button
+onClick={()=>{
+setShowCreateAnnouncement(false);
+setAnnouncementTitle("");
+setAnnouncementMessage("");
+setAnnouncementAudience("everyone");
+setAnnouncementExpiry("");
+}}
+
+className="
+absolute
+z-30
+top-6
+right-6
+
+w-14
+h-14
+
+rounded-2xl
+
+flex
+items-center
+justify-center
+
+bg-zinc-900
+
+border
+border-zinc-800
+
+text-zinc-400
+
+hover:text-white
+hover:bg-red-500/15
+hover:border-red-500/40
+hover:rotate-90
+hover:scale-110
+
+transition-all
+duration-300
+"
+>
+✕
+</button>
+
+<div
+className="
+relative
+z-20
+
+p-10
+
+max-h-[85vh]
+
+overflow-y-auto
+
+pr-5
+
+scrollbar-thin
+scrollbar-thumb-orange-500/40
+scrollbar-track-transparent
+"
+>
+
+<h2
+className="
+text-4xl
+font-black
+
+bg-gradient-to-r
+from-yellow-300
+via-orange-400
+to-orange-500
+
+bg-clip-text
+text-transparent
+"
+>
+
+Create Announcement
+
+</h2>
+
+<p className="text-zinc-500 mt-2 mb-8">
+
+Publish a new announcement
+
+</p>
+
+<div className="space-y-7">
+
+{/* Title */}
+
+<div>
+
+<label className="block mb-3 font-bold text-orange-300">
+Title
+</label>
+
+<input
+type="text"
+value={announcementTitle}
+maxLength={120}
+onChange={(e)=>setAnnouncementTitle(e.target.value)}
+placeholder="e.g. Court 2 closed on Sunday"
+className="
+w-full
+h-16
+rounded-[22px]
+bg-zinc-900/80
+border
+border-zinc-800
+px-6
+outline-none
+transition-all
+duration-300
+focus:border-orange-500
+focus:shadow-[0_0_30px_rgba(249,115,22,.18)]
+"
+/>
+
+<div className="text-right text-zinc-500 text-sm mt-2">
+{announcementTitle.length}/120
+</div>
+
+</div>
+
+{/* Message */}
+
+<div>
+
+<label
+className="
+block
+mb-3
+font-bold
+text-orange-300
+"
+>
+
+Message
+
+</label>
+
+<textarea
+
+value={announcementMessage}
+
+onChange={(e)=>
+setAnnouncementMessage(e.target.value)
+}
+
+rows={7}
+
+placeholder="Write your announcement..."
+
+className="
+w-full
+
+rounded-[24px]
+
+bg-zinc-900/80
+
+border
+border-zinc-800
+
+p-6
+
+resize-none
+
+outline-none
+
+transition-all
+duration-300
+
+focus:border-orange-500
+focus:shadow-[0_0_35px_rgba(249,115,22,.20)]
+"
+/>
+
+<div
+className="
+text-right
+text-zinc-500
+text-sm
+mt-2
+"
+>
+
+{announcementMessage.length} characters
+
+</div>
+
+</div>
+
+
+{/* Audience */}
+
+<div>
+
+<label className="block mb-4 font-bold text-orange-300">
+Visible To
+</label>
+
+<div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+
+{[
+{
+value:"everyone",
+title:"Everyone",
+icon:"🌍",
+desc:"Students, Staff & Admin"
+},
+{
+value:"staff_admin",
+title:"Staff & Admin",
+icon:"🛡",
+desc:"Only staff and admin. Students never see it."
+}
+].map((option)=>{
+const selected = announcementAudience===option.value;
+return (
+<motion.button
+key={option.value}
+type="button"
+whileHover={{ y:-4 }}
+whileTap={{ scale:.98 }}
+aria-pressed={selected}
+onClick={()=>setAnnouncementAudience(option.value)}
+className={`
+group
+relative
+overflow-hidden
+rounded-[26px]
+border
+p-6
+text-left
+transition-colors
+duration-300
+${
+selected
+? "border-orange-500 bg-orange-500/10 shadow-[0_0_35px_rgba(249,115,22,.25)]"
+: "border-zinc-800 bg-zinc-900/70 hover:border-orange-500/30"
+}
+`}
+>
+
+<div
+className="
+absolute
+inset-0
+bg-gradient-to-br
+from-orange-500/5
+via-transparent
+to-yellow-500/5
+opacity-0
+group-hover:opacity-100
+transition
+"
+/>
+
+{selected && (
+<motion.span
+initial={{ scale:0 }}
+animate={{ scale:1 }}
+transition={{ type:"spring", stiffness:500, damping:22 }}
+className="absolute right-5 top-5 flex h-7 w-7 items-center justify-center rounded-full bg-orange-500 text-sm font-black text-black"
+>
+✓
+</motion.span>
+)}
+
+<div className="relative">
+
+<div
+className="
+text-5xl
+mb-4
+transition-transform
+duration-300
+group-hover:scale-110
+"
+>
+{option.icon}
+</div>
+
+<h3 className="text-xl font-black">
+{option.title}
+</h3>
+
+<p className="mt-2 text-zinc-500 text-sm leading-6">
+{option.desc}
+</p>
+
+</div>
+
+</motion.button>
+);
+})}
+
+</div>
+
+</div>
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+<div>
+
+<label className="block mb-3 font-bold text-orange-300">
+Type
+</label>
+
+<select
+value={announcementType}
+onChange={(e)=>setAnnouncementType(e.target.value)}
+className="w-full h-16 rounded-[22px] bg-zinc-900 border border-zinc-800 px-6 outline-none transition-all duration-300 focus:border-orange-500 focus:shadow-[0_0_30px_rgba(249,115,22,.18)]"
+>
+{["announcement","general","event","important","sport","maintenance"].map((type)=>(
+<option key={type} value={type}>
+{type.charAt(0).toUpperCase()+type.slice(1)}
+</option>
+))}
+</select>
+
+</div>
+
+<div>
+
+<label className="block mb-3 font-bold text-orange-300">
+Sport (optional)
+</label>
+
+<select
+value={announcementSportId}
+onChange={(e)=>setAnnouncementSportId(e.target.value)}
+className="w-full h-16 rounded-[22px] bg-zinc-900 border border-zinc-800 px-6 outline-none transition-all duration-300 focus:border-orange-500 focus:shadow-[0_0_30px_rgba(249,115,22,.18)]"
+>
+<option value="">All sports</option>
+{sports.map((sport:any)=>(
+<option key={sport.id} value={String(sport.id)}>
+{sport.name}
+</option>
+))}
+</select>
+
+</div>
+
+</div>
+
+{/* Expiry */}
+
+<div>
+
+<label className="block mb-3 font-bold text-orange-300">
+Expires (optional)
+</label>
+
+<input
+type="datetime-local"
+value={announcementExpiry}
+onChange={(e)=>setAnnouncementExpiry(e.target.value)}
+className="w-full h-16 rounded-[22px] bg-zinc-900 border border-zinc-800 px-6 outline-none transition-all duration-300 focus:border-orange-500 focus:shadow-[0_0_30px_rgba(249,115,22,.18)]"
+/>
+
+<p className="mt-2 text-sm text-zinc-500">
+Leave empty to keep it visible until you delete it. Expired announcements hide automatically.
+</p>
+
+</div>
+
+{announcementError && (
+<motion.div
+role="alert"
+initial={{ opacity:0, y:-6 }}
+animate={{ opacity:1, y:0 }}
+className="mt-8 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-sm font-semibold text-red-300"
+>
+{announcementError}
+</motion.div>
+)}
+
+{/* Publish Button */}
+
+<button
+
+onClick={async () => {
+  if (announcementSubmitting) return;
+
+  const title = announcementTitle.trim();
+  const message = announcementMessage.trim();
+
+  if (!title) {
+    setAnnouncementError("Please enter a title.");
+    return;
+  }
+  if (!message) {
+    setAnnouncementError("Please write a message.");
+    return;
+  }
+
+  let expiresAt: string | undefined;
+  if (announcementExpiry) {
+    const expiryDate = new Date(announcementExpiry);
+    if (Number.isNaN(expiryDate.getTime()) || expiryDate.getTime() <= Date.now()) {
+      setAnnouncementError("Expiry must be a future date and time.");
+      return;
+    }
+    expiresAt = expiryDate.toISOString();
+  }
+
+  setAnnouncementError("");
+  setAnnouncementSubmitting(true);
+
+  try {
+    const res = await authFetch(`${API_BASE_URL}/notices`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        message,
+        audience: announcementAudience,
+        type: announcementType,
+        sportId: announcementSportId || null,
+        expiresAt,
+      }),
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      setAnnouncementError(data?.message || "Could not publish the announcement.");
+      return;
+    }
+
+    setAnnouncements((prev) => [data, ...prev]);
+    setAnnouncementTitle("");
+    setAnnouncementMessage("");
+    setAnnouncementAudience("everyone");
+    setAnnouncementType("announcement");
+    setAnnouncementSportId("");
+    setAnnouncementExpiry("");
+    setShowCreateAnnouncement(false);
+  } catch (err) {
+    console.error("Failed to create announcement", err);
+    setAnnouncementError("Could not reach the server. Check that the backend is running and try again.");
+  } finally {
+    setAnnouncementSubmitting(false);
+  }
+}}
+
+disabled={announcementSubmitting}
+
+className="
+relative
+
+group
+
+overflow-hidden
+
+mt-10
+
+w-full
+h-16
+
+rounded-[24px]
+
+bg-gradient-to-r
+from-yellow-400
+via-orange-500
+to-orange-600
+
+text-black
+
+font-black
+text-xl
+
+shadow-[0_0_40px_rgba(249,115,22,.35)]
+
+hover:scale-[1.02]
+active:scale-[.98]
+
+transition-all
+duration-300
+"
+
+>
+
+<div
+className="
+absolute
+inset-0
+
+-translate-x-full
+
+group-hover:translate-x-full
+
+transition-transform
+duration-[1200ms]
+
+bg-gradient-to-r
+from-transparent
+via-white/25
+to-transparent
+"
+/>
+
+<span
+className="
+relative
+z-10
+
+flex
+items-center
+justify-center
+gap-3
+"
+>
+
+<span
+className="
+text-2xl
+
+group-hover:rotate-12
+group-hover:scale-125
+
+transition-all
+"
+>
+
+🚀
+
+</span>
+
+{announcementSubmitting ? "Publishing..." : "Publish Announcement"}
+
+</span>
+
+</button>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+<div
+className="
+absolute
+
+bottom-0
+left-1/2
+
+-translate-x-1/2
+
+w-[75%]
+h-14
+
+bg-orange-500/20
+
+blur-3xl
+
+pointer-events-none
+
+animate-pulse
+"
+/>
+
+</motion.div>
+
+</div>
+
+)}
+
+{/* ================= ADD STAFF ================= */}
+{showAddStaff && (
+<div className="fixed inset-0 z-[260] bg-black/85 backdrop-blur-xl flex items-center justify-center p-6">
+<motion.div initial={{opacity:0,scale:.92,y:30}} animate={{opacity:1,scale:1,y:0}} transition={{duration:.3,ease:[0.16,1,0.3,1]}} className="relative w-full max-w-[640px] max-h-[90vh] overflow-y-auto rounded-[36px] bg-gradient-to-br from-zinc-950 via-black to-zinc-950 border border-sky-500/20 shadow-[0_0_80px_rgba(56,189,248,.18)] p-10">
+<button type="button" onClick={resetAddStaff} className="absolute top-6 right-6 w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:bg-red-500/15 hover:border-red-500/40 hover:rotate-90 transition-all duration-300">✕</button>
+<h2 className="text-4xl font-black bg-gradient-to-r from-sky-300 via-cyan-300 to-sky-500 bg-clip-text text-transparent">Add Staff</h2>
+<p className="text-zinc-500 mt-2 mb-8">Create a staff account. They can sign in with the email or staff ID.</p>
+<div className="space-y-5">
+<div>
+<label className="block mb-3 font-bold text-sky-300">Full Name</label>
+<input type="text" name="new-staff-name" autoComplete="off" value={staffName} onChange={(e)=>setStaffName(e.target.value)} placeholder="e.g. Rahul Sharma" className="w-full h-14 rounded-[20px] bg-zinc-900/80 border border-zinc-800 px-5 outline-none transition-all duration-300 focus:border-sky-500 focus:shadow-[0_0_30px_rgba(56,189,248,.18)]" />
+</div>
+<div>
+<label className="block mb-3 font-bold text-sky-300">Email</label>
+<input type="email" name="new-staff-email" autoComplete="off" value={staffEmail} onChange={(e)=>setStaffEmail(e.target.value)} placeholder="e.g. rahul.sharma@xyzuniversity.ac.in" className="w-full h-14 rounded-[20px] bg-zinc-900/80 border border-zinc-800 px-5 outline-none transition-all duration-300 focus:border-sky-500 focus:shadow-[0_0_30px_rgba(56,189,248,.18)]" />
+</div>
+<div>
+<label className="block mb-3 font-bold text-sky-300">Phone (optional)</label>
+<input type="tel" name="new-staff-phone" autoComplete="off" inputMode="numeric" maxLength={10} value={staffPhone} onChange={(e)=>setStaffPhone(e.target.value.replace(/\D/g, ""))} placeholder="e.g. 9876543210" className="w-full h-14 rounded-[20px] bg-zinc-900/80 border border-zinc-800 px-5 outline-none transition-all duration-300 focus:border-sky-500 focus:shadow-[0_0_30px_rgba(56,189,248,.18)]" />
+</div>
+<div>
+<label className="block mb-3 font-bold text-sky-300">Staff ID (optional)</label>
+<input type="text" name="new-staff-id" autoComplete="off" value={staffId} onChange={(e)=>setStaffId(e.target.value)} placeholder="e.g. STF-1024 (they can log in with this too)" className="w-full h-14 rounded-[20px] bg-zinc-900/80 border border-zinc-800 px-5 outline-none transition-all duration-300 focus:border-sky-500 focus:shadow-[0_0_30px_rgba(56,189,248,.18)]" />
+</div>
+<div>
+<label className="block mb-3 font-bold text-sky-300">Password</label>
+<div className="relative">
+<input type={showStaffPassword ? "text" : "password"} name="new-staff-password" autoComplete="new-password" value={staffPassword} onChange={(e)=>setStaffPassword(e.target.value)} placeholder="e.g. Court#2026 (at least 8 characters)" className="w-full h-14 rounded-[20px] bg-zinc-900/80 border border-zinc-800 pl-5 pr-14 outline-none transition-all duration-300 focus:border-sky-500 focus:shadow-[0_0_30px_rgba(56,189,248,.18)]" />
+<button type="button" onClick={()=>setShowStaffPassword((prev)=>!prev)} aria-label={showStaffPassword ? "Hide password" : "Show password"} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors">{showStaffPassword ? <EyeOff size={20} /> : <Eye size={20} />}</button>
+</div>
+<p className="mt-2 text-sm text-zinc-500">Share this password with the staff member. They use it with their email or staff ID to log in.</p>
+</div>
+</div>
+{staffError && (<div role="alert" className="mt-6 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-sm font-semibold text-red-300">{staffError}</div>)}
+<button type="button" onClick={createStaff} disabled={staffSubmitting} className="mt-8 w-full h-16 rounded-[24px] bg-gradient-to-r from-sky-400 to-cyan-400 text-black font-black text-xl shadow-[0_0_40px_rgba(56,189,248,.35)] hover:scale-[1.02] active:scale-[.98] transition-all duration-300 disabled:opacity-60 disabled:hover:scale-100">{staffSubmitting ? "Creating..." : "Create Staff Account"}</button>
+<div className="mt-10 border-t border-zinc-800 pt-8">
+<h3 className="text-xl font-black text-sky-300">Current staff</h3>
+{staffListError && (<p role="alert" className="mt-3 text-sm font-semibold text-red-300">{staffListError}</p>)}
+{staffList.length === 0 && !staffListError && (<p className="mt-3 text-sm text-zinc-500">No staff accounts yet.</p>)}
+<ul className="mt-4 space-y-3">
+{staffList.map((member) => (
+<li key={member.id} className="flex items-center justify-between gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-5 py-4">
+<div className="min-w-0">
+<p className="font-bold truncate">{member.name}</p>
+<p className="text-sm text-zinc-500 truncate">{member.email}{member.rollNo ? ` · ${member.rollNo}` : ""}</p>
+</div>
+<button type="button" onClick={() => removeStaff(member)} disabled={removingStaffId !== null} className="shrink-0 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-300 hover:bg-red-500/20 transition-colors disabled:opacity-50">{removingStaffId === member.id ? "Removing..." : "Remove"}</button>
+</li>
+))}
+</ul>
+</div>
+</motion.div>
+</div>
+)}
+{staffCreatedMessage && (<div className="fixed bottom-8 right-8 z-[300] rounded-2xl border border-emerald-500/30 bg-zinc-950 px-6 py-4 font-bold text-emerald-300 shadow-[0_0_40px_rgba(16,185,129,.25)]">{staffCreatedMessage}</div>)}
+
       <AnonymousRequestsModal open={showRequests} onClose={() => setShowRequests(false)} />
+      <DamagedGearModal open={showDamagedGear} onClose={() => setShowDamagedGear(false)} role="admin" />
     </main>
 
 

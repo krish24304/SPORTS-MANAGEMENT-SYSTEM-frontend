@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Unused old files kept locally for reference (not part of the app).
+    "archive/**",
   ]),
 ]);
 

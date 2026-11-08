@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -16,13 +17,12 @@ import {
   RefreshCw,
   Timer,
   Undo2,
-  X,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { getAuthHeaders, getAuthToken, getUser } from "@/lib/auth";
 
-const API = "http://localhost:5000";
+const API = API_BASE_URL;
 const CURRENT_STATUSES = ["active", "return_requested"];
 
 type GearItem = { gearId: number; quantity: number };

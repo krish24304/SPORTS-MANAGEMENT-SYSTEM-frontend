@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
 import DashboardLayout from "@/components/layout/DashboardLayout";
-import { getUser } from "@/lib/auth";
+import { useHydrated, useStoredUser } from "@/lib/auth";
 import { studentApi } from "@/lib/student-api";
 import type { Gear, Slot, Sport } from "@/types";
 import SportSelector from "@/components/booking/SportSelector";
@@ -27,8 +27,8 @@ function errorMessage(error: unknown, fallback: string) {
 
 export default function BookingPage() {
   const reduce = useReducedMotion();
-  const [authChecked, setAuthChecked] = useState(false);
-  const [userId, setUserId] = useState<number | null>(null);
+  const authChecked = useHydrated();
+  const userId = useStoredUser()?.id ?? null;
 
   const [sports, setSports] = useState<Sport[]>([]);
   const [sportsLoading, setSportsLoading] = useState(true);
@@ -51,11 +51,6 @@ export default function BookingPage() {
   const [bookingError, setBookingError] = useState("");
   const [success, setSuccess] = useState<BookingSuccessInfo | null>(null);
 
-  useEffect(() => {
-    const user = getUser();
-    setUserId(user?.id ?? null);
-    setAuthChecked(true);
-  }, []);
 
   const loadSports = useCallback(async () => {
     try {
@@ -114,7 +109,7 @@ export default function BookingPage() {
 
   useEffect(() => {
     if (!selectedSport?.hasSlotSystem) return;
-    const id = window.setInterval(() => loadSlots(selectedSport.id), SLOT_REFRESH_MS);
+    const id = window.setInterval(() => { if (!document.hidden) loadSlots(selectedSport.id); }, SLOT_REFRESH_MS);
     return () => window.clearInterval(id);
   }, [selectedSport, loadSlots]);
 

@@ -1,7 +1,9 @@
 
 "use client";
+import { API_BASE_URL } from "@/lib/config";
 
 import {
+  type CSSProperties,
   useCallback,
   useEffect,
   useMemo,
@@ -225,7 +227,7 @@ function getSportVisualKind(sportName: string): SportVisualKind {
   return "default";
 }
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = API_BASE_URL;
 
 const AQUA_PAGE_THEME: Accent = {
   key: "aqua",
@@ -327,6 +329,7 @@ export default function SportDetailsPage() {
 
   const [sport, setSport] = useState<Sport | null>(null);
   const [slots, setSlots] = useState<Slot[]>([]);
+  const [sportNotices, setSportNotices] = useState<{ id: number; title: string; message: string; createdAt: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotsError, setSlotsError] = useState("");
@@ -427,7 +430,8 @@ export default function SportDetailsPage() {
 
       setBookingHistory(data);
 
-      const sportNumber = currentSportId ?? sport?.id;
+      // The route id is the sport id, so there is no need to wait for the sport to load.
+      const sportNumber = currentSportId ?? Number(sportId);
       const active = data.find(
         (item: Booking) =>
           item.sport?.id === sportNumber &&
@@ -438,7 +442,27 @@ export default function SportDetailsPage() {
     } catch {
       // Booking history is secondary UI; don't block the sport page.
     }
-  }, [sport?.id]);
+  }, [sportId]);
+
+  // Announcements posted for this sport (e.g. "Pool closed 5-7 PM").
+  useEffect(() => {
+    if (!sportId) return;
+    let cancelled = false;
+    fetch(`${API_BASE}/notices?sportId=${encodeURIComponent(sportId)}`, {
+      cache: "no-store",
+      headers: { ...getAuthHeaders() },
+    })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (!cancelled) setSportNotices(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        // Notices are secondary; the page works without them.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sportId]);
 
   useEffect(() => {
     if (!sportId) {
@@ -479,7 +503,7 @@ export default function SportDetailsPage() {
     if (!sportId || !sport?.hasSlotSystem) return;
 
     const interval = window.setInterval(() => {
-      fetchSlots();
+      if (!document.hidden) fetchSlots();
     }, 30000);
 
     return () => window.clearInterval(interval);
@@ -887,6 +911,27 @@ style={{ borderColor: accent.border }}
               </div>
             </div>
           </motion.div>
+        )}
+
+        {sportNotices.length > 0 && (
+          <div className="mb-8 space-y-3">
+            {sportNotices.map((notice) => (
+              <div
+                key={notice.id}
+                className="flex items-start gap-4 rounded-2xl border border-sky-500/20 bg-sky-500/[0.045] px-5 py-4"
+              >
+                <div className="mt-0.5 rounded-xl bg-sky-500/10 p-2 text-sky-300">
+                  <CircleAlert size={18} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-sky-300">{notice.title}</p>
+                  <p className="mt-1 whitespace-pre-line break-words text-sm leading-6 text-zinc-400">
+                    {notice.message}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
         {/* ============================================================
@@ -2540,11 +2585,13 @@ function SlotPopup({
   const modeColor = mode === "available" ? GLASS_AVAILABLE : GLASS_ALL;
   const titleId = "slot-popup-title";
 
-  useEffect(() => {
-    if (!open) {
-      setTransitioning(false);
-    }
-  }, [open]);
+  // Reset the mode-switch animation when the popup closes (adjusting state
+  // during render instead of in an effect avoids an extra render pass).
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (!open) setTransitioning(false);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -2636,7 +2683,7 @@ function SlotPopup({
                   onClick={onClose}
                   aria-label="Close slot picker"
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-[#06111f]/85 text-zinc-600 outline-none transition hover:text-white focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[#081827]"
-                  style={{ ["--tw-ring-color" as any]: modeColor.solid }}
+                  style={{ "--tw-ring-color": modeColor.solid } as CSSProperties}
                 >
                   <X size={16} />
                 </button>
@@ -2771,7 +2818,7 @@ function SlotPopup({
                     <CircleAlert className="mx-auto text-red-400/80" size={20} />
                     <p className="mt-3 text-sm font-bold text-zinc-300">Unable to load slots</p>
                     <p className="mt-1 text-xs text-zinc-600">
-                      We couldn't refresh the current availability.
+                      We couldn&apos;t refresh the current availability.
                     </p>
                     {onRetry && (
                       <button

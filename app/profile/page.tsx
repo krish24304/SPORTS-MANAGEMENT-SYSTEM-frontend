@@ -1,22 +1,66 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { API_BASE_URL, ID_PHOTO_TYPES, checkIdPhoto, fileUrl } from "@/lib/config";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Mail, Hash, Phone, ShieldCheck, FileText, Maximize2, X } from "lucide-react";
+import { Mail, Hash, Phone, ShieldCheck, FileText, Maximize2, X, Upload, Loader2, KeyRound } from "lucide-react";
 import DashboardLayout from "@/components/layout/DashboardLayout";
-import { getUser } from "@/lib/auth";
+import IdPhoto from "@/components/ui/IdPhoto";
+import ChangePasswordModal from "@/components/ui/ChangePasswordModal";
+import { authFetch, getUser, saveUser } from "@/lib/auth";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 export default function ProfilePage() {
-  const [user, setUser] = useState<any>(null);
+  // The stored user only exists in the browser; on the server this is null.
+  const isBrowser = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+  const [updatedUser, setUser] = useState<ReturnType<typeof getUser>>(null);
+  const user = updatedUser ?? (isBrowser ? getUser() : null);
   const [enlarged, setEnlarged] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setUser(getUser());
-  }, []);
+  const idCardUrl = fileUrl(user?.idCardPhoto);
 
-  const idCardUrl = user?.idCardPhoto ? `${API_BASE_URL}${user.idCardPhoto}` : null;
+  const uploadIdCard = async (file: File) => {
+    const problem = checkIdPhoto(file);
+    if (problem) {
+      setUploadMessage({ type: "error", text: problem });
+      return;
+    }
+    setUploading(true);
+    setUploadMessage(null);
+    try {
+      const form = new FormData();
+      form.append("idCard", file);
+      const res = await authFetch(`${API_BASE_URL}/users/me/id-card`, { method: "PUT", body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setUploadMessage({ type: "error", text: data?.message || "Could not upload the photo." });
+        return;
+      }
+      // Keep the sign-in token; only the photo changes.
+      const current = getUser();
+      if (!current) {
+        setUploadMessage({ type: "error", text: "Please sign in again." });
+        return;
+      }
+      const updated = { ...current, idCardPhoto: data.idCardPhoto };
+      saveUser(updated);
+      setUser(updated);
+      setUploadMessage({ type: "success", text: "ID card photo saved." });
+    } catch {
+      setUploadMessage({ type: "error", text: "Could not reach the server. Please try again." });
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
   const isPdf = idCardUrl ? /\.pdf$/i.test(idCardUrl) : false;
 
   const infoFields = [
@@ -67,6 +111,19 @@ export default function ProfilePage() {
                   >
                     <ShieldCheck size={13} /> {user?.role || "student"}
                   </motion.p>
+                  <motion.button
+                    type="button"
+                    onClick={() => setChangePasswordOpen(true)}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.25 }}
+                    whileHover={{ y: -1 }}
+                    whileTap={{ scale: 0.97 }}
+                    className="group mt-3 inline-flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-zinc-900/70 px-3 py-1.5 text-xs font-semibold text-zinc-300 shadow-sm transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300"
+                  >
+                    <KeyRound size={12} className="text-emerald-400 transition-transform group-hover:-rotate-12" />
+                    Change password
+                  </motion.button>
                 </div>
               </div>
 
@@ -92,7 +149,7 @@ export default function ProfilePage() {
                       onClick={() => setEnlarged(true)}
                       className="group relative block overflow-hidden rounded-2xl border border-zinc-800 shadow-lg transition hover:border-emerald-500/40"
                     >
-                      <img src={idCardUrl} alt="Uploaded ID card" className="h-28 w-44 object-cover transition group-hover:scale-105" />
+                      <IdPhoto path={idCardUrl} alt="Uploaded ID card" className="h-28 w-44 object-cover transition group-hover:scale-105" />
                       <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/50 group-hover:opacity-100">
                         <span className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-[11px] font-semibold text-white">
                           <Maximize2 size={11} /> View ID
@@ -104,6 +161,35 @@ export default function ProfilePage() {
                   <div className="rounded-2xl border border-dashed border-zinc-700 bg-zinc-900/50 px-6 py-5 text-center">
                     <p className="text-xs text-zinc-500">No ID card uploaded</p>
                   </div>
+                )}
+
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept={ID_PHOTO_TYPES.join(",")}
+                  className="sr-only"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) uploadIdCard(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={uploading}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs font-bold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-60"
+                >
+                  {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {uploading ? "Uploading…" : idCardUrl ? "Replace photo" : "Upload ID card"}
+                </button>
+                <p className="mt-1.5 text-center text-[10px] text-zinc-600">JPG, PNG or WEBP · up to 5 MB</p>
+                {uploadMessage && (
+                  <p
+                    role={uploadMessage.type === "error" ? "alert" : "status"}
+                    className={`mt-2 max-w-[220px] text-center text-xs font-semibold ${uploadMessage.type === "error" ? "text-red-300" : "text-emerald-300"}`}
+                  >
+                    {uploadMessage.text}
+                  </p>
                 )}
               </motion.div>
             </div>
@@ -160,6 +246,7 @@ export default function ProfilePage() {
           </motion.div>
         )}
       </AnimatePresence>
+      <ChangePasswordModal open={changePasswordOpen} onClose={() => setChangePasswordOpen(false)} />
     </DashboardLayout>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import { useEffect, useMemo, useState } from "react";
 import { authFetch } from "@/lib/auth";
 import { AnimatePresence, motion } from "framer-motion";
@@ -70,8 +71,6 @@ function toAnnouncement(notice: NoticeResponse): Announcement {
   };
 }
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 export default function AnnouncementsPage() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);

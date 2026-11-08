@@ -5,11 +5,9 @@ import Link from "next/link";
 
 import {
   ArrowRight,
-  CalendarCheck,
   CheckCircle2,
   ChevronRight,
   CircleDot,
-  Clock3,
   Dumbbell,
   Goal,
   LockKeyhole,

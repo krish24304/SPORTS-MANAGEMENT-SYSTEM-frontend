@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   CalendarCheck,
@@ -54,6 +55,13 @@ export default function NextBookingCard({
   onRequestReturn,
   onRetry,
 }: Props) {
+  // Ticks every 30 s so the card switches to "ended" while the page is open.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   if (loading) {
     return (
       <div className="rounded-3xl border border-zinc-800/80 bg-[#090b0b] p-5 text-sm text-zinc-500">
@@ -88,7 +96,7 @@ export default function NextBookingCard({
   }
 
   const isReturnRequested = booking.status === "return_requested";
-  const hasEnded = booking.endTime !== null && new Date(booking.endTime).getTime() <= Date.now();
+  const hasEnded = booking.endTime !== null && new Date(booking.endTime).getTime() <= now;
 
   return (
     <div className="space-y-3">

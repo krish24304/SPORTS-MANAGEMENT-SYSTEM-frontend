@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { API_BASE_URL } from "@/lib/config";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
@@ -16,9 +17,9 @@ import {
   XCircle,
 } from "lucide-react";
 
-import { authFetch, getAuthToken, getUser } from "@/lib/auth";
+import { authFetch, useStoredUser } from "@/lib/auth";
 
-const API = "http://localhost:5000";
+const API = API_BASE_URL;
 
 type Tab = "history" | "issued" | "slots" | "resources";
 
@@ -85,12 +86,9 @@ export default function StaffOperationsPage() {
   const reduceMotion = useReducedMotion();
   const [tab, setTab] = useState<Tab>("history");
   const [sports, setSports] = useState<SportOption[]>([]);
-  const [role, setRole] = useState<string>("");
   const [notice, setNotice] = useState<Notice | null>(null);
 
   useEffect(() => {
-    setRole(getUser()?.role?.toLowerCase() ?? "");
-    setSignedIn(!!getAuthToken());
     authFetch(`${API}/sports`, { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setSports(Array.isArray(data) ? data : []))
@@ -103,7 +101,7 @@ export default function StaffOperationsPage() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const [signedIn, setSignedIn] = useState(false);
+  const signedIn = !!useStoredUser()?.token;
 
   return (
     <main className="min-h-screen bg-[#050607] px-6 py-10 text-white md:px-10">
@@ -277,6 +275,7 @@ function HistoryPanel({ sports, onNotice }: { sports: SportOption[]; onNotice: (
 function IssuedPanel({ sports, onNotice }: { sports: SportOption[]; onNotice: (n: Notice) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Student[]>([]);
+  const visibleResults = query.trim().length >= 2 ? results : [];
   const [student, setStudent] = useState<Student | null>(null);
   const [gearId, setGearId] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -311,10 +310,8 @@ function IssuedPanel({ sports, onNotice }: { sports: SportOption[]; onNotice: (n
   }, []);
 
   useEffect(() => {
-    if (query.trim().length < 2) {
-      setResults([]);
-      return;
-    }
+    // Shorter queries show no results (see visibleResults), so nothing to fetch.
+    if (query.trim().length < 2) return;
     const timer = window.setTimeout(async () => {
       try {
         const res = await authFetch(`${API}/students/search?q=${encodeURIComponent(query.trim())}`, { cache: "no-store" });
@@ -387,9 +384,9 @@ function IssuedPanel({ sports, onNotice }: { sports: SportOption[]; onNotice: (n
           <Search size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600" />
           <input className={`${inputClass} pl-11`} placeholder="Student name, email or college ID" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        {results.length > 0 && !student && (
+        {visibleResults.length > 0 && !student && (
           <div className="space-y-2">
-            {results.map((s) => (
+            {visibleResults.map((s) => (
               <button key={s.id} type="button" onClick={() => { setStudent(s); setResults([]); setQuery(""); }} className="flex w-full items-center justify-between rounded-2xl border border-zinc-800 bg-black/40 px-4 py-3 text-left text-sm transition hover:border-emerald-400/40">
                 <span className="font-semibold text-white">{s.name}</span>
                 <span className="text-xs text-zinc-500">{s.rollNo || s.email}</span>
@@ -506,19 +503,30 @@ function ResourcePanel({ sports }: { sports: SportOption[] }) {
   const [sportId, setSportId] = useState("");
   const [units, setUnits] = useState<ResourceRow[]>([]);
   const [loading, setLoading] = useState(false);
+  // Ignores replies for a sport that is no longer selected.
+  const latestSportRef = useRef("");
 
-  useEffect(() => {
-    if (!sportId) {
-      setUnits([]);
+  const chooseSport = (id: string) => {
+    setSportId(id);
+    setUnits([]);
+    latestSportRef.current = id;
+    if (!id) {
+      setLoading(false);
       return;
     }
     setLoading(true);
-    authFetch(`${API}/resources?sportId=${sportId}`, { cache: "no-store" })
+    authFetch(`${API}/resources?sportId=${id}`, { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setUnits(Array.isArray(data) ? data : []))
-      .catch(() => setUnits([]))
-      .finally(() => setLoading(false));
-  }, [sportId]);
+      .then((data) => {
+        if (latestSportRef.current === id) setUnits(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (latestSportRef.current === id) setUnits([]);
+      })
+      .finally(() => {
+        if (latestSportRef.current === id) setLoading(false);
+      });
+  };
 
   const counts = useMemo(() => {
     const available = units.filter((u) => u.status === "available").length;
@@ -527,7 +535,7 @@ function ResourcePanel({ sports }: { sports: SportOption[] }) {
 
   return (
     <Panel title="Resources" subtitle="Courts and resource units for a sport, with their current status.">
-      <select className={inputClass} value={sportId} onChange={(e) => setSportId(e.target.value)}>
+      <select className={inputClass} value={sportId} onChange={(e) => chooseSport(e.target.value)}>
         <option value="">Choose a sport</option>
         {sports.map((sport) => (
           <option key={sport.id} value={sport.id}>{sport.name}</option>

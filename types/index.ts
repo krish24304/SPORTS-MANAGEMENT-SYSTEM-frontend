@@ -184,10 +184,14 @@ export interface StudentHistoryResponse {
   issuedGears: IssuedGear[];
 }
 
+// What /auth/login returns and what is kept in the browser after signing in.
 export interface LoginResponse {
   id: number;
   name: string;
   email: string;
   role: string;
   rollNo?: string | null;
+  phone?: string | null;
+  idCardPhoto?: string | null;
+  token?: string;
 }

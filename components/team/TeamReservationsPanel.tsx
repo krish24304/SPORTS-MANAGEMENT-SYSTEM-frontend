@@ -1,12 +1,13 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { AlertTriangle, CalendarPlus, CheckCircle2, Clock3, Loader2, RefreshCw, Trash2, Users, XCircle } from "lucide-react";
 
 import { authFetch, getAuthToken } from "@/lib/auth";
 
-const API = "http://localhost:5000";
+const API = API_BASE_URL;
 
 type ResourceUnit = { id: number; name: string; status: string };
 type Sport = { id: number; name: string; resourceUnits?: ResourceUnit[] };

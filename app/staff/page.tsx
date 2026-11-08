@@ -1,68 +1,54 @@
 "use client";
 
+import { API_BASE_URL, fileUrl } from "@/lib/config";
+import IdPhoto from "@/components/ui/IdPhoto";
 import { useEffect, useState } from "react";
-import { getAuthHeaders, authFetch, getUser } from "@/lib/auth";
+import { authFetch, getUser } from "@/lib/auth";
 import AnonymousRequestsModal from "@/components/suggestions/AnonymousRequestsModal";
 import { useSuggestionUnread } from "@/lib/suggestions";
 import ReturnRequestsModal from "@/components/staff/ReturnRequestsModal";
-import ReturnDetailsModal from "@/components/staff/ReturnDetailsModal";
+import ReturnDetailsModal, { type DamageItem } from "@/components/staff/ReturnDetailsModal";
+import DamagedGearModal from "@/components/staff/DamagedGearModal";
+import TeamReservationBadge from "@/components/ui/TeamReservationBadge";
 import Navbar from "@/components/layout/Navbar";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faGear } from "@fortawesome/free-solid-svg-icons";
 import ResourceManagerPopup from "@/components/ResourceManagerPopup";
 import { AnimatePresence } from "framer-motion";
 // import motion from "framer-motion";
-import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import {
-  Dumbbell,
-  CalendarClock,
-  RotateCcw,
   Users,
-  Trophy,
   ClipboardList,
   ClipboardCheck,
   Megaphone,
   Bell,
   GraduationCap,
-  Building2,
-  Activity,
   Search,
   CalendarDays,
-  ShieldCheck,
   Eye,
   User,
-X,
-Package,
-  PackageOpen,
+  X,
+  Package,
   Clock,
   ChevronRight,
   RefreshCw,
   Tag,
   MapPin,
   Timer,
-  CircleUserRound,
-  ArrowLeft,
   CircleDot,
   Swords,
   Crosshair,
   Table2,
   Undo2,
   Target,
+  AlertTriangle,
 } from "lucide-react";
 import {
-    createResources,
-    renameResourceUnit,
-    deleteResourceUnit,
-} from "../resourceApi";
-import {
-ClockIcon,
-WrenchScrewdriverIcon,
-BuildingOffice2Icon,
-UsersIcon,
-PlusCircleIcon,
-PencilSquareIcon,
-TrashIcon
- ,PlusIcon
+  ClockIcon,
+  WrenchScrewdriverIcon,
+  BuildingOffice2Icon,
+  UsersIcon,
+  PlusCircleIcon,
+  PencilSquareIcon,
+  TrashIcon,
 } from "@heroicons/react/24/outline";
 import { motion } from "framer-motion";
 
@@ -262,7 +248,7 @@ function toReturnRow(booking: any) {
     requestTime: requested
       ? requested.toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
       : "",
-    idCard: photo ? (photo.startsWith("http") ? photo : `http://localhost:5000${photo}`) : null,
+    idCard: fileUrl(photo),
     bookingId: booking.id,
     gearItems: gears,
     status: "Return requested",
@@ -417,6 +403,7 @@ const [editingDuration, setEditingDuration] = useState(false);
 const [editingCapacity, setEditingCapacity] = useState(false);
 const [maxTeamSize,setMaxTeamSize]=useState(10);
 const [showReturnRequests, setShowReturnRequests] = useState(false);
+const [showDamagedGear, setShowDamagedGear] = useState(false);
 
 const [returnSearch, setReturnSearch] = useState("");
 
@@ -558,7 +545,7 @@ const formatClock = (iso: string) =>
 
 const describeLoadError = (status: number | null) => {
   if (status === null) {
-    return "Can't reach the backend at localhost:5000. Start the backend, then press Refresh.";
+    return "Can't reach the backend. Make sure it is running, then press Refresh.";
   }
   if (status === 401) {
     return "You are not signed in on this browser. Sign in as staff at /login, then press Refresh.";
@@ -624,7 +611,7 @@ const getBookingDate = (booking: any) => {
 
 
 const getBookingAvatar = (booking: any) => {
-  return (
+  return fileUrl(
     booking?.user?.idCardPhoto ||
     booking?.user?.profilePhoto ||
     booking?.user?.photo ||
@@ -655,7 +642,7 @@ const getBookingId = (booking: any) => {
 const fetchLiveBookings = async () => {
   let status: number | null = null;
   try {
-    const res = await authFetch("http://localhost:5000/bookings/live", { cache: "no-store" });
+    const res = await authFetch(`${API_BASE_URL}/bookings/live`, { cache: "no-store" });
     status = res.status;
 
     if (!res.ok) {
@@ -678,7 +665,7 @@ useEffect(() => {
   fetchLiveBookings();
 
   const interval = setInterval(() => {
-    fetchLiveBookings();
+    if (!document.hidden) fetchLiveBookings();
   }, 10000);
 
   return () => clearInterval(interval);
@@ -745,7 +732,7 @@ const [showFullIdCard, setShowFullIdCard] = useState(false);
 const refreshReturnPanel = async () => {
   setRefreshingReturns(true);
   try {
-    const returnsRes = await authFetch("http://localhost:5000/returns/pending");
+    const returnsRes = await authFetch(`${API_BASE_URL}/returns/pending`);
     const returns = await returnsRes.json();
     setReturnRequests(Array.isArray(returns) ? returns.map(toReturnRow) : []);
   } catch (err) {
@@ -755,11 +742,11 @@ const refreshReturnPanel = async () => {
   }
 };
 
-const submitReturnCondition = async (row: any, condition: "good" | "damaged") => {
-  const res = await authFetch(`http://localhost:5000/approve-return/${row.id}`, {
+const submitReturnCondition = async (row: any, condition: "good" | "damaged", details?: { items: DamageItem[]; note: string }) => {
+  const res = await authFetch(`${API_BASE_URL}/approve-return/${row.id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ damaged: condition === "damaged" }),
+    body: JSON.stringify(condition === "damaged" && details ? { items: details.items, note: details.note } : {}),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -792,7 +779,7 @@ const [advanceBookingDays,setAdvanceBookingDays]=useState(7);
 const fetchSports = async () => {
     try {
       const response = await authFetch(
-        "http://localhost:5000/sports"
+        `${API_BASE_URL}/sports`
       );
 
       const data = await response.json();
@@ -807,14 +794,14 @@ const fetchSports = async () => {
  
   useEffect(() => {
     fetchSports();
-    authFetch("http://localhost:5000/dashboard/stats")
+    authFetch(`${API_BASE_URL}/dashboard/stats`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setDashStats(data))
       .catch(() => setDashStats(null));
     // fetch announcements, return requests and anonymous requests from backend
     const fetchAnnouncements = async () => {
       try {
-        const res = await authFetch("http://localhost:5000/notices");
+        const res = await authFetch(`${API_BASE_URL}/notices`);
         if (!res.ok) {
           setLoadErrors((prev) => ({ ...prev, notices: describeLoadError(res.status) }));
           return;
@@ -830,7 +817,7 @@ const fetchSports = async () => {
 
     const fetchReturnRequests = async () => {
       try {
-        const res = await authFetch("http://localhost:5000/returns/pending");
+        const res = await authFetch(`${API_BASE_URL}/returns/pending`);
         if (!res.ok) {
           setLoadErrors((prev) => ({ ...prev, returns: describeLoadError(res.status) }));
           return;
@@ -861,7 +848,7 @@ const deleteSport = async (id: string) => {
   try {
 
     const response = await authFetch(
-  `http://localhost:5000/sports/${id}`,
+  `${API_BASE_URL}/sports/${id}`,
   {
     method: "DELETE",
   }
@@ -884,7 +871,7 @@ try{
 
 const response = await authFetch(
 
-`http://localhost:5000/sports/${updatedSport.id}`,
+`${API_BASE_URL}/sports/${updatedSport.id}`,
 
 {
 
@@ -1132,7 +1119,7 @@ const handleCreateReservation = async () => {
 
   for (const day of days) {
     try {
-      const response = await authFetch("http://localhost:5000/team-reservations", {
+      const response = await authFetch(`${API_BASE_URL}/team-reservations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1184,7 +1171,7 @@ const handleCreateReservation = async () => {
 
 const refreshSportDetail = async (sportId: number) => {
   try {
-    const response = await authFetch("http://localhost:5000/sports");
+    const response = await authFetch(`${API_BASE_URL}/sports`);
     const data = await response.json();
     if (Array.isArray(data)) {
       setSports(data);
@@ -1198,7 +1185,7 @@ const refreshSportDetail = async (sportId: number) => {
 
 const fetchMaintenanceWindows = async (sportId: number) => {
   try {
-    const response = await authFetch(`http://localhost:5000/sports/${sportId}/maintenance-windows`);
+    const response = await authFetch(`${API_BASE_URL}/sports/${sportId}/maintenance-windows`);
     if (!response.ok) {
       setActiveMaintenanceWindows([]);
       return;
@@ -1245,7 +1232,7 @@ const handleSaveMaintenance = async (force: boolean) => {
   setMaintenanceSaving(true);
 
   try {
-    const response = await authFetch(`http://localhost:5000/sports/${selectedSport.id}/maintenance-windows`, {
+    const response = await authFetch(`${API_BASE_URL}/sports/${selectedSport.id}/maintenance-windows`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1297,7 +1284,7 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
   if (!selectedSport?.id) return;
 
   try {
-    const response = await authFetch(`http://localhost:5000/sports/${selectedSport.id}/maintenance-windows/${windowId}/end`, {
+    const response = await authFetch(`${API_BASE_URL}/sports/${selectedSport.id}/maintenance-windows/${windowId}/end`, {
       method: "POST",
     });
 
@@ -1479,6 +1466,8 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
         }}
         onCondition={submitReturnCondition}
       />
+
+      <DamagedGearModal open={showDamagedGear} onClose={() => setShowDamagedGear(false)} role="staff" />
 
 {/* ================= FULL SIZE ID CARD ================= */}
 
@@ -3183,7 +3172,7 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
                 <img
                   src={getBookingAvatar(
                     selectedLiveBooking
-                  )}
+                  ) ?? undefined}
 
                   alt=""
 
@@ -3986,19 +3975,12 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
                 <h3 className="text-xl font-black text-white mt-1">{getStudentName(selectedLiveBooking)}</h3>
                 <p className="text-xs text-zinc-500 mt-1">{selectedLiveBooking.user?.rollNo || "No college ID on file"}</p>
                 <div className="mt-5 overflow-hidden rounded-2xl border border-zinc-800 bg-black/40">
-                  {selectedLiveBooking.user?.idCardPhoto ? (
-                    <img
-                      src={
-                        String(selectedLiveBooking.user.idCardPhoto).startsWith("http")
-                          ? selectedLiveBooking.user.idCardPhoto
-                          : `http://localhost:5000${selectedLiveBooking.user.idCardPhoto}`
-                      }
-                      alt="Uploaded student ID card"
-                      className="w-full max-h-[60vh] object-contain"
-                    />
-                  ) : (
-                    <p className="p-10 text-center text-sm text-zinc-500">This student has not uploaded an ID card photo.</p>
-                  )}
+                  <IdPhoto
+                    path={selectedLiveBooking.user?.idCardPhoto}
+                    alt="Uploaded student ID card"
+                    className="w-full max-h-[60vh] min-h-[160px] object-contain"
+                    empty={<p className="p-10 text-center text-sm text-zinc-500">This student has not uploaded an ID card photo.</p>}
+                  />
                 </div>
               </motion.div>
             </motion.div>
@@ -4116,7 +4098,7 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
 
         {/* QUICK ACTIONS */}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-5 mb-10">
 
 <button
   onClick={() => setShowLiveBookings(true)}
@@ -4161,6 +4143,29 @@ const handleEndMaintenanceWindow = async (windowId: number) => {
 
   <p className="text-zinc-500 text-sm mt-2">
     Approve equipment returns
+  </p>
+</button>
+
+<button
+  onClick={() => setShowDamagedGear(true)}
+  className="group bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-6 hover:border-red-500 transition-all hover:-translate-y-1"
+>
+  <div className="mb-4 flex justify-center">
+  <AlertTriangle
+    className="
+    w-10 h-10
+    text-red-400
+    drop-shadow-[0_0_12px_rgba(239,68,68,.8)]
+    "
+  />
+</div>
+
+  <h3 className="font-black text-xl">
+    Damaged Gear
+  </h3>
+
+  <p className="text-zinc-500 text-sm mt-2">
+    Damage records &amp; repairs
   </p>
 </button>
 
@@ -4340,16 +4345,7 @@ placeholder="Search sports, resources, staff..."
 
                     <div className="flex justify-between items-center">
                       <span className="text-zinc-400">Team Booking</span>
-                      <span className="
-                        px-3 py-1
-                        rounded-full
-                        bg-sky-500/10
-                        text-sky-400
-                        border border-sky-500/20
-                        text-sm font-semibold
-                      ">
-                        {sport.teamReservationEnabled ? "Enabled" : "Disabled"}
-                      </span>
+                      <TeamReservationBadge summary={sport.teamReservation} />
                     </div>
 
                     <div className="flex justify-between items-center">
@@ -4989,7 +4985,7 @@ font-semibold
 
 onClick={async () => {
   try {
-    await authFetch(`http://localhost:5000/notices/${item.id}`, { method: 'DELETE' });
+    await authFetch(`${API_BASE_URL}/notices/${item.id}`, { method: 'DELETE' });
     setAnnouncements((prev) => prev.filter((a) => a.id !== item.id));
   } catch (err) {
     console.error('Failed to delete announcement', err);
@@ -5574,7 +5570,7 @@ onClick={async () => {
   setAnnouncementSubmitting(true);
 
   try {
-    const res = await authFetch("http://localhost:5000/notices", {
+    const res = await authFetch(`${API_BASE_URL}/notices`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

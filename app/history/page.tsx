@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import { useEffect, useMemo, useState } from "react";
 import { History, RotateCcw, Search } from "lucide-react";
 
@@ -43,7 +44,7 @@ export default function HistoryPage() {
       }
 
       const response = await fetch(
-        `http://localhost:5000/users/${user.id}/bookings`,
+        `${API_BASE_URL}/users/${user.id}/bookings`,
         { headers: { ...getAuthHeaders() } }
       );
 
@@ -69,7 +70,7 @@ export default function HistoryPage() {
   const handleReturnRequest = async (bookingId: number) => {
     try {
       const response = await fetch(
-        `http://localhost:5000/return-request/${bookingId}`,
+        `${API_BASE_URL}/return-request/${bookingId}`,
         {
           method: "PUT",
           headers: { ...getAuthHeaders() },
@@ -91,7 +92,7 @@ export default function HistoryPage() {
   const [allSportNames, setAllSportNames] = useState<string[]>([]);
 
   useEffect(() => {
-    fetch("http://localhost:5000/sports", { cache: "no-store" })
+    fetch(`${API_BASE_URL}/sports`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : []))
       .then((data: { name: string }[]) => {
         if (Array.isArray(data)) {

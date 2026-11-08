@@ -1,4 +1,5 @@
 "use client";
+import { API_BASE_URL } from "@/lib/config";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -21,7 +22,7 @@ export default function LoginPage() {
     setApprovalStatus(null);
 
     try {
-      const response = await fetch("http://localhost:5000/auth/login", {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -64,6 +65,7 @@ export default function LoginPage() {
         <div className="space-y-5">
           <input
             type="text"
+            autoComplete="username"
             placeholder="College ID or email"
             value={collegeId}
             onChange={(e) => setCollegeId(e.target.value)}
@@ -72,6 +74,7 @@ export default function LoginPage() {
           <div className="relative">
             <input
               type={showPassword ? "text" : "password"}
+              autoComplete="current-password"
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

@@ -1,6 +1,7 @@
+import { API_BASE_URL } from "@/lib/config";
 import { getAuthHeaders } from "@/lib/auth";
 
-const API = "http://localhost:5000";
+const API = API_BASE_URL;
 
 export async function createResources(data: {
     sportId: number;

@@ -1,7 +1,6 @@
+import { API_BASE_URL } from "@/lib/config";
 import { getAuthToken } from "./auth";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 type RequestOptions = RequestInit & {
   token?: string;

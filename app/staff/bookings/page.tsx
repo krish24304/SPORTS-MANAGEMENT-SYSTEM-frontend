@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -22,7 +23,7 @@ import {
 
 import { getAuthHeaders, getAuthToken } from "@/lib/auth";
 
-const API = "http://localhost:5000";
+const API = API_BASE_URL;
 
 type GearItem = { gearId: number; quantity: number };
 

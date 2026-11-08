@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+!.env.example
+
+# Local build/debug output
+build.log
+out.txt
+
+# Unused old files kept locally for reference only
+/archive/

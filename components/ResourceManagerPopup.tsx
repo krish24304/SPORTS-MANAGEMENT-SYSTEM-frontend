@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -9,7 +10,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { authFetch } from "@/lib/auth";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_BASE = API_BASE_URL;
 
 type SportOverview = {
   sport: {
@@ -342,7 +343,7 @@ const handleAddResource = async () => {
   const quantity = autoGenerate ? Math.max(1, resourceQuantity) : 1;
 
   try {
-    const response = await authFetch(`http://localhost:5000/sports/${sport.id}/resource-units`, {
+    const response = await authFetch(`${API_BASE_URL}/sports/${sport.id}/resource-units`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ resourceType, quantity }),
@@ -358,7 +359,7 @@ const handleAddResource = async () => {
 
     // A single custom name overrides the auto-generated one.
     if (!autoGenerate && resourceName.trim() && created[0]) {
-      const renamed = await authFetch(`http://localhost:5000/resource-units/${created[0].id}`, {
+      const renamed = await authFetch(`${API_BASE_URL}/resource-units/${created[0].id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: resourceName.trim() }),
@@ -385,7 +386,7 @@ const handleRenameResource = async (index: number) => {
   if (!target) return;
 
   try {
-    const response = await authFetch(`http://localhost:5000/resource-units/${target.id}`, {
+    const response = await authFetch(`${API_BASE_URL}/resource-units/${target.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: trimmed }),
@@ -415,7 +416,7 @@ const handleDeleteResource = async (index: number) => {
   if (!deletedItem) return;
 
   try {
-    const response = await authFetch(`http://localhost:5000/resource-units/${deletedItem.id}`, {
+    const response = await authFetch(`${API_BASE_URL}/resource-units/${deletedItem.id}`, {
       method: "DELETE",
     });
 
@@ -439,7 +440,7 @@ const handleUndoDelete = async () => {
   if (!pendingDelete) return;
 
   try {
-    const response = await authFetch(`http://localhost:5000/sports/${sport.id}/resource-units`, {
+    const response = await authFetch(`${API_BASE_URL}/sports/${sport.id}/resource-units`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ resourceType: pendingDelete.item.type || resourceType, quantity: 1 }),
@@ -451,7 +452,7 @@ const handleUndoDelete = async () => {
     }
 
     let [recreated] = await response.json();
-    const renamed = await authFetch(`http://localhost:5000/resource-units/${recreated.id}`, {
+    const renamed = await authFetch(`${API_BASE_URL}/resource-units/${recreated.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: pendingDelete.item.name }),
@@ -534,7 +535,7 @@ const handleAddGear = async () => {
       const current = gears[editingGearIndex as number];
       if (!current) return;
 
-      const response = await authFetch(`http://localhost:5000/gears/${current.id}`, {
+      const response = await authFetch(`${API_BASE_URL}/gears/${current.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -555,7 +556,7 @@ const handleAddGear = async () => {
       nextGears = [...gears];
       nextGears[editingGearIndex as number] = updatedGear;
     } else {
-      const response = await authFetch("http://localhost:5000/gears", {
+      const response = await authFetch(`${API_BASE_URL}/gears`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmedName, sportId: sport.id, totalQuantity: gearQuantity }),
@@ -590,7 +591,7 @@ const handleGearQuantity = async (index: number, delta: number) => {
   const nextQuantity = Math.max(0, (currentGear.totalQuantity ?? 0) + delta);
 
   try {
-    const response = await authFetch(`http://localhost:5000/gears/${currentGear.id}`, {
+    const response = await authFetch(`${API_BASE_URL}/gears/${currentGear.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -621,7 +622,7 @@ const handleDeleteGear = async (index: number) => {
   if (!target) return;
 
   try {
-    const response = await authFetch(`http://localhost:5000/gears/${target.id}`, {
+    const response = await authFetch(`${API_BASE_URL}/gears/${target.id}`, {
       method: "DELETE",
     });
 

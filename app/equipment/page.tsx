@@ -1,12 +1,12 @@
 "use client";
 
+import { API_BASE_URL } from "@/lib/config";
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { AlertTriangle, CheckCircle2, ChevronDown, Package, Search } from "lucide-react";
 
 import DashboardLayout from "@/components/layout/DashboardLayout";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 type GearApi = {
   id: number;

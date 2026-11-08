@@ -2,17 +2,50 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { AlertTriangle, Box, CalendarDays, Check, CheckCircle2, ClipboardCheck, Clock, IdCard, Loader2, Maximize2, ShieldCheck, Undo2, X } from "lucide-react";
+import { AlertTriangle, Box, CalendarDays, Check, CheckCircle2, ClipboardCheck, Clock, IdCard, Loader2, Maximize2, Minus, Plus, ShieldCheck, Undo2, X } from "lucide-react";
+
+import IdPhoto from "@/components/ui/IdPhoto";
 
 import { ReturnRow, requestLabel, totalItems } from "./returnUtils";
 
 export type ConditionError = Error & { status?: number };
 
+// How many of each booked gear came back damaged or were lost. The rest return to stock.
+export type DamageItem = { gearId: number; damaged: number; lost: number };
+
 type Props = {
   row: ReturnRow | null;
   onClose: () => void;
-  onCondition: (row: ReturnRow, condition: "good" | "damaged") => Promise<void>;
+  onCondition: (row: ReturnRow, condition: "good" | "damaged", details?: { items: DamageItem[]; note: string }) => Promise<void>;
 };
+
+type Counts = Record<number, { damaged: number; lost: number }>;
+
+// The same gear can appear twice in a booking; count it once.
+function bookedGears(row: ReturnRow) {
+  const map = new Map<number, { gearId: number; name: string; quantity: number }>();
+  row.gearItems.forEach((item) => {
+    const existing = map.get(item.gearId);
+    if (existing) existing.quantity += item.quantity;
+    else map.set(item.gearId, { ...item });
+  });
+  return [...map.values()];
+}
+
+function Stepper({ value, max, onChange, label, tone }: { value: number; max: number; onChange: (n: number) => void; label: string; tone: "red" | "amber" }) {
+  const color = tone === "red" ? "text-red-200 border-red-400/30 bg-red-500/10" : "text-amber-200 border-amber-400/30 bg-amber-500/10";
+  return (
+    <div className="flex items-center justify-center gap-1.5">
+      <button type="button" aria-label={`Less ${label}`} onClick={() => onChange(value - 1)} disabled={value <= 0} className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500 disabled:opacity-30">
+        <Minus size={14} />
+      </button>
+      <span aria-label={label} className={`flex h-8 min-w-[2.5rem] items-center justify-center rounded-lg border px-2 text-sm font-black ${value > 0 ? color : "border-zinc-800 bg-black/40 text-zinc-500"}`}>{value}</span>
+      <button type="button" aria-label={`More ${label}`} onClick={() => onChange(value + 1)} disabled={value >= max} className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500 disabled:opacity-30">
+        <Plus size={14} />
+      </button>
+    </div>
+  );
+}
 
 export default function ReturnDetailsModal({ row, onClose, onCondition }: Props) {
   const reduceMotion = useReducedMotion();
@@ -21,14 +54,21 @@ export default function ReturnDetailsModal({ row, onClose, onCondition }: Props)
   const [error, setError] = useState("");
   const [done, setDone] = useState<"good" | "damaged" | null>(null);
   const [photoOpen, setPhotoOpen] = useState(false);
+  const [counts, setCounts] = useState<Counts>({});
+  const [doneSummary, setDoneSummary] = useState("");
 
-  useEffect(() => {
+  // A different return was opened: start from a clean form (React's "adjust state on prop change").
+  const [shownId, setShownId] = useState(row?.id);
+  if (row?.id !== shownId) {
+    setShownId(row?.id);
     setSubmitting(null);
     setConfirmDamaged(false);
     setError("");
     setDone(null);
     setPhotoOpen(false);
-  }, [row?.id]);
+    setCounts({});
+    setDoneSummary("");
+  }
 
   useEffect(() => {
     if (!row) return;
@@ -41,26 +81,60 @@ export default function ReturnDetailsModal({ row, onClose, onCondition }: Props)
     return () => window.removeEventListener("keydown", onKey);
   }, [row, photoOpen, submitting, onClose]);
 
+  const gears = row ? bookedGears(row) : [];
+  const countFor = (gearId: number) => counts[gearId] ?? { damaged: 0, lost: 0 };
+  const setCount = (gearId: number, field: "damaged" | "lost", value: number) => {
+    const quantity = gears.find((g) => g.gearId === gearId)?.quantity ?? 0;
+    setCounts((prev) => {
+      const current = prev[gearId] ?? { damaged: 0, lost: 0 };
+      const other = field === "damaged" ? current.lost : current.damaged;
+      const next = Math.max(0, Math.min(value, quantity - other));
+      return { ...prev, [gearId]: { ...current, [field]: next } };
+    });
+  };
+  const totalDamaged = gears.reduce((sum, g) => sum + countFor(g.gearId).damaged, 0);
+  const totalLost = gears.reduce((sum, g) => sum + countFor(g.gearId).lost, 0);
+
   const choose = async (condition: "good" | "damaged") => {
     if (!row || submitting) return;
     if (condition === "damaged" && !confirmDamaged) {
+      setError("");
       setConfirmDamaged(true);
+      return;
+    }
+    if (condition === "damaged" && totalDamaged + totalLost === 0) {
+      setError("Set how many are lost or damaged, or close this and choose Good condition.");
       return;
     }
     setError("");
     setSubmitting(condition);
     try {
-      await onCondition(row, condition);
+      await onCondition(
+        row,
+        condition,
+        condition === "damaged"
+          ? { items: gears.map((g) => ({ gearId: g.gearId, ...countFor(g.gearId) })), note: "" }
+          : undefined
+      );
+      setDoneSummary(
+        condition === "good"
+          ? "Returned in good condition"
+          : ["Return completed", totalDamaged ? `${totalDamaged} damaged` : "", totalLost ? `${totalLost} lost` : ""]
+              .filter(Boolean)
+              .join(" · ")
+      );
+      setConfirmDamaged(false);
       setDone(condition);
       window.setTimeout(onClose, 900);
     } catch (err) {
       const e = err as ConditionError;
       if (e.status === 409) {
         setError("This return was already handled by someone else. The list has been refreshed.");
+        setConfirmDamaged(false);
       } else {
+        // Keep the lost/damaged popup open so the counts are not lost.
         setError(e instanceof Error ? e.message : "Could not save the return. Please try again.");
       }
-      setConfirmDamaged(false);
     } finally {
       setSubmitting(null);
     }
@@ -204,7 +278,7 @@ export default function ReturnDetailsModal({ row, onClose, onCondition }: Props)
                 </div>
                 <div>
                   <h3 className="text-lg font-black text-white">Identity <span className="text-pink-300">verification</span></h3>
-                  <p className="text-xs text-zinc-500">Check the student's uploaded ID card.</p>
+                  <p className="text-xs text-zinc-500">Check the student&apos;s uploaded ID card.</p>
                 </div>
               </div>
 
@@ -215,7 +289,7 @@ export default function ReturnDetailsModal({ row, onClose, onCondition }: Props)
                   className="group mt-4 flex w-full items-center justify-between gap-4 overflow-hidden rounded-3xl border border-pink-500/20 bg-black/40 p-4 text-left transition hover:border-pink-400/40"
                 >
                   <span className="flex items-center gap-4">
-                    <img src={photo} alt="Student ID card" className="h-20 w-32 rounded-xl border border-zinc-800 object-cover" />
+                    <IdPhoto path={photo} alt="Student ID card" className="h-20 w-32 rounded-xl border border-zinc-800 object-cover" />
                     <span className="text-sm text-zinc-300">Uploaded ID card</span>
                   </span>
                   <span className="flex items-center gap-2 text-xs font-semibold text-pink-300 transition group-hover:text-pink-200">
@@ -257,25 +331,7 @@ export default function ReturnDetailsModal({ row, onClose, onCondition }: Props)
                     <motion.span initial={{ scale: 0 }} animate={{ scale: [0, 1.3, 1] }} transition={{ duration: 0.5 }}>
                       <CheckCircle2 size={26} />
                     </motion.span>
-                    <span className="font-bold">{done === "good" ? "Returned in good condition" : "Returned as damaged"}</span>
-                  </motion.div>
-                ) : confirmDamaged ? (
-                  <motion.div key="confirm" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-4 rounded-2xl border border-red-400/30 bg-red-500/5 p-5">
-                    <p className="text-sm text-red-200">Mark this as damaged? The equipment will be counted as damaged and will not go back into stock.</p>
-                    <div className="mt-4 flex flex-wrap gap-3">
-                      <button type="button" onClick={() => setConfirmDamaged(false)} disabled={!!submitting} className="rounded-xl border border-zinc-700 px-4 py-2.5 text-sm font-semibold text-zinc-300 hover:border-zinc-500 disabled:opacity-50">
-                        Go back
-                      </button>
-                      <motion.button
-                        type="button"
-                        onClick={() => choose("damaged")}
-                        disabled={!!submitting}
-                        whileTap={reduceMotion ? undefined : { scale: 0.97 }}
-                        className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-400 disabled:opacity-60"
-                      >
-                        {submitting === "damaged" && <Loader2 size={14} className="animate-spin" />} Yes, mark as damaged
-                      </motion.button>
-                    </div>
+                    <span className="font-bold">{doneSummary}</span>
                   </motion.div>
                 ) : (
                   <motion.div key="choose" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -292,18 +348,122 @@ export default function ReturnDetailsModal({ row, onClose, onCondition }: Props)
                     <motion.button
                       type="button"
                       onClick={() => choose("damaged")}
-                      disabled={!!submitting}
+                      disabled={!!submitting || gears.length === 0}
+                      title={gears.length === 0 ? "This booking has no gear to mark as lost or damaged" : undefined}
                       whileHover={reduceMotion ? undefined : { y: -2, boxShadow: "0 0 30px rgba(248,113,113,.3)" }}
                       whileTap={reduceMotion ? undefined : { scale: 0.97 }}
                       className="inline-flex items-center justify-center gap-2 rounded-2xl border border-red-400/40 bg-red-500/10 px-5 py-4 text-sm font-bold text-red-200 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <X size={16} /> Broken / damaged
+                      <X size={16} /> Broken / damaged / lost
                     </motion.button>
                   </motion.div>
                 )}
               </AnimatePresence>
             </motion.section>
           </motion.div>
+
+          <AnimatePresence>
+            {confirmDamaged && !done && (
+              <motion.div
+                key="damage-popup"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="damage-popup-title"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (!submitting) setConfirmDamaged(false);
+                }}
+                className="fixed inset-0 z-[260] flex items-center justify-center bg-black/80 p-3 backdrop-blur-xl sm:p-6"
+              >
+                <motion.div
+                  initial={reduceMotion ? false : { opacity: 0, y: 30, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={reduceMotion ? undefined : { opacity: 0, y: 20 }}
+                  transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                  onClick={(event) => event.stopPropagation()}
+                  className="relative max-h-[90vh] w-full max-w-[680px] overflow-y-auto rounded-[30px] border border-red-500/25 bg-gradient-to-br from-[#140a0a] via-[#080808] to-[#0d0808] p-6 shadow-[0_0_120px_rgba(239,68,68,.18)] sm:p-8"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDamaged(false)}
+                    disabled={!!submitting}
+                    aria-label="Close"
+                    className="absolute right-5 top-5 rounded-2xl border border-zinc-800 bg-zinc-900/90 p-2.5 text-zinc-500 hover:border-red-500/30 hover:text-red-300 disabled:opacity-40"
+                  >
+                    <X size={16} />
+                  </button>
+                  <h3 id="damage-popup-title" className="pr-12 text-2xl font-black text-white">
+                    What came back <span className="text-red-300">broken or missing?</span>
+                  </h3>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    {row.student} · {requestLabel(row.id)}. Set how many of each gear are lost or damaged. Everything else goes back into stock.
+                  </p>
+
+                  <div className="mt-6 overflow-hidden rounded-2xl border border-zinc-800">
+                    <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-zinc-800 bg-zinc-900/60 px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500 sm:grid-cols-[1fr_auto_auto_auto]">
+                      <span>Gear</span>
+                      <span className="w-[120px] text-center">Lost</span>
+                      <span className="w-[120px] text-center">Damaged</span>
+                      <span className="hidden w-16 text-center sm:block">Good</span>
+                    </div>
+                    {gears.map((gear) => {
+                      const c = countFor(gear.gearId);
+                      const good = gear.quantity - c.damaged - c.lost;
+                      return (
+                        <div key={gear.gearId} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-zinc-900 px-4 py-3 last:border-b-0 sm:grid-cols-[1fr_auto_auto_auto]">
+                          <div className="min-w-0">
+                            <p className="truncate font-bold text-white">{gear.name}</p>
+                            <p className="text-xs text-zinc-500">{gear.quantity} borrowed</p>
+                          </div>
+                          <div className="w-[120px]">
+                            <Stepper label={`${gear.name} lost`} tone="amber" value={c.lost} max={gear.quantity - c.damaged} onChange={(n) => setCount(gear.gearId, "lost", n)} />
+                          </div>
+                          <div className="w-[120px]">
+                            <Stepper label={`${gear.name} damaged`} tone="red" value={c.damaged} max={gear.quantity - c.lost} onChange={(n) => setCount(gear.gearId, "damaged", n)} />
+                          </div>
+                          <span className="hidden w-16 text-center text-sm font-black text-emerald-300 sm:block">{good}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+
+                  {error && (
+                    <p role="alert" className="mt-3 flex items-start gap-2 text-sm font-semibold text-red-300">
+                      <AlertTriangle size={15} className="mt-0.5 shrink-0" /> {error}
+                    </p>
+                  )}
+
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm text-zinc-400">
+                      <span className="font-bold text-amber-300">{totalLost} lost</span> ·{" "}
+                      <span className="font-bold text-red-300">{totalDamaged} damaged</span> ·{" "}
+                      <span className="font-bold text-emerald-300">
+                        {gears.reduce((sum, g) => sum + g.quantity, 0) - totalLost - totalDamaged} back in stock
+                      </span>
+                    </p>
+                    <div className="flex gap-3">
+                      <button type="button" onClick={() => setConfirmDamaged(false)} disabled={!!submitting} className="rounded-xl border border-zinc-700 px-4 py-2.5 text-sm font-semibold text-zinc-300 hover:border-zinc-500 disabled:opacity-50">
+                        Go back
+                      </button>
+                      <motion.button
+                        type="button"
+                        onClick={() => choose("damaged")}
+                        disabled={!!submitting || totalLost + totalDamaged === 0}
+                        whileTap={reduceMotion ? undefined : { scale: 0.97 }}
+                        className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-400 disabled:opacity-50"
+                      >
+                        {submitting === "damaged" && <Loader2 size={14} className="animate-spin" />} Confirm return
+                      </motion.button>
+                    </div>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <AnimatePresence>
             {photoOpen && photo && (

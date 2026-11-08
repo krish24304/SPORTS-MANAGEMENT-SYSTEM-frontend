@@ -1,11 +1,14 @@
 "use client";
 
+import { API_BASE_URL, fileUrl } from "@/lib/config";
+import IdPhoto from "@/components/ui/IdPhoto";
+import ChangePasswordModal from "@/components/ui/ChangePasswordModal";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, Menu, User, ChevronRight, LogOut, Mail, ShieldCheck, UserPlus, FileText, Maximize2, Check, X as XIcon, Phone, Hash } from "lucide-react";
-import { authFetch, clearUser, getAuthToken, getUser } from "@/lib/auth";
+import { Bell, Menu, User, ChevronRight, LogOut, KeyRound, Mail, ShieldCheck, UserPlus, FileText, Maximize2, Check, X as XIcon, Phone, Hash } from "lucide-react";
+import { authFetch, clearUser, getAuthToken, getUser, useHydrated, useStoredUser } from "@/lib/auth";
 
 type NavbarProps = {
   onOpenMobileSidebar?: () => void;
@@ -33,8 +36,6 @@ type SignupRequest = {
   createdAt: string;
 };
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 const VIEWED_STORAGE_KEY = "sports-block-viewed-announcements";
 
@@ -74,8 +75,8 @@ export default function Navbar({
   onOpenMobileSidebar = () => {},
 }: NavbarProps) {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
-  const [user, setUser] = useState<any>(null);
+  const mounted = useHydrated();
+  const user = useStoredUser();
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -100,10 +101,6 @@ export default function Navbar({
    * ============================================================
    */
 
-  useEffect(() => {
-    setMounted(true);
-    setUser(getUser());
-  }, []);
 
   /*
    * ============================================================
@@ -122,8 +119,8 @@ export default function Navbar({
   useEffect(() => {
     const currentUser = getUser();
 
+    // Runs once on mount, so the list is still empty here: nothing to reset.
     if (!getAuthToken() || currentUser?.role === "staff" || currentUser?.role === "admin") {
-      setNotices([]);
       return;
     }
 
@@ -151,7 +148,7 @@ export default function Navbar({
 
     fetchUnread();
 
-    const interval = window.setInterval(fetchUnread, 30000);
+    const interval = window.setInterval(() => { if (!document.hidden) fetchUnread(); }, 30000);
 
     return () => {
       cancelled = true;
@@ -303,7 +300,6 @@ const hasUnread = unreadCount > 0;
     const staffOrAdmin = currentUser?.role === "admin" || currentUser?.role === "staff";
 
     if (!getAuthToken() || !staffOrAdmin) {
-      setSignupRequests([]);
       return;
     }
 
@@ -321,7 +317,7 @@ const hasUnread = unreadCount > 0;
     };
 
     fetchSignupRequests();
-    const interval = window.setInterval(fetchSignupRequests, 30000);
+    const interval = window.setInterval(() => { if (!document.hidden) fetchSignupRequests(); }, 30000);
 
     return () => {
       cancelled = true;
@@ -374,6 +370,8 @@ const hasUnread = unreadCount > 0;
       setSignupActionLoading(false);
     }
   };
+
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   const handleLogout = () => {
     clearUser();
@@ -461,7 +459,7 @@ const hasUnread = unreadCount > 0;
               announcements directly from their own dashboards)
           ================================================= */}
 
-          {!isStaffOrAdmin && (
+          {user && !isStaffOrAdmin && (
 
           <div
             ref={notificationRef}
@@ -1195,7 +1193,7 @@ const hasUnread = unreadCount > 0;
               PROFILE
           ================================================== */}
 
-          {isStaffOrAdmin ? (
+          {!user ? null : isStaffOrAdmin ? (
 
             <div ref={profileRef} className="relative border-l border-zinc-800 pl-2 sm:pl-3">
 
@@ -1281,6 +1279,18 @@ const hasUnread = unreadCount > 0;
 
                     <button
                       type="button"
+                      onClick={() => {
+                        setProfileOpen(false);
+                        setChangePasswordOpen(true);
+                      }}
+                      className="flex w-full items-center justify-center gap-2 border-t border-zinc-800 bg-zinc-900/40 px-5 py-3.5 text-sm font-semibold text-zinc-300 transition-colors hover:bg-emerald-500/10 hover:text-emerald-300"
+                    >
+                      <KeyRound size={15} />
+                      Change password
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={handleLogout}
                       className="flex w-full items-center justify-center gap-2 border-t border-zinc-800 bg-zinc-900/40 px-5 py-3.5 text-sm font-semibold text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
                     >
@@ -1338,6 +1348,7 @@ const hasUnread = unreadCount > 0;
         </div>
 
       </div>
+      <ChangePasswordModal open={changePasswordOpen} onClose={() => setChangePasswordOpen(false)} />
     </header>
 
     {/* =================================================
@@ -1419,7 +1430,7 @@ const hasUnread = unreadCount > 0;
                 {selectedSignupRequest.idCardPhoto ? (
                   /\.pdf$/i.test(selectedSignupRequest.idCardPhoto) ? (
                     <a
-                      href={`${API_BASE_URL}${selectedSignupRequest.idCardPhoto}`}
+                      href={fileUrl(selectedSignupRequest.idCardPhoto) ?? undefined}
                       target="_blank"
                       rel="noreferrer"
                       className="flex items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-5 py-4 text-sm font-semibold text-violet-300 transition hover:border-violet-500/40"
@@ -1433,10 +1444,10 @@ const hasUnread = unreadCount > 0;
                       onClick={() => setEnlargedIdCard(true)}
                       className="group relative block w-full overflow-hidden rounded-2xl border border-zinc-800"
                     >
-                      <img
-                        src={`${API_BASE_URL}${selectedSignupRequest.idCardPhoto}`}
+                      <IdPhoto
+                        path={selectedSignupRequest.idCardPhoto}
                         alt="Uploaded ID card"
-                        className="max-h-[260px] w-full object-contain bg-zinc-900"
+                        className="max-h-[260px] min-h-[120px] w-full object-contain bg-zinc-900"
                       />
                       <span className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/40 group-hover:opacity-100">
                         <span className="flex items-center gap-2 rounded-full bg-black/70 px-4 py-2 text-xs font-semibold text-white">
@@ -1551,7 +1562,7 @@ const hasUnread = unreadCount > 0;
           <motion.img
             initial={{ scale: 0.95 }}
             animate={{ scale: 1 }}
-            src={`${API_BASE_URL}${selectedSignupRequest.idCardPhoto}`}
+            src={fileUrl(selectedSignupRequest.idCardPhoto) ?? undefined}
             alt="Uploaded ID card, full size"
             onClick={(event) => event.stopPropagation()}
             className="max-h-[88vh] max-w-[92vw] rounded-2xl object-contain"

@@ -1,7 +1,8 @@
+import { API_BASE_URL } from "@/lib/config";
 import { useCallback, useEffect, useState } from "react";
 import { authFetch } from "@/lib/auth";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+export { API_BASE_URL };
 
 export const SUGGESTION_MAX_LENGTH = 1000;
 const SEEN_EVENT = "suggestions:seen";
@@ -91,7 +92,7 @@ export function useSuggestionUnread() {
 
   useEffect(() => {
     void refresh();
-    const interval = window.setInterval(refresh, 30000);
+    const interval = window.setInterval(() => { if (!document.hidden) refresh(); }, 30000);
     window.addEventListener(SEEN_EVENT, refresh);
     return () => {
       window.clearInterval(interval);

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import DashboardLayout from "@/components/layout/DashboardLayout";
+import { API_BASE_URL } from "@/lib/config";
 
 interface Gear {
   id: number;
@@ -37,19 +38,35 @@ interface Sport {
   maintenanceMessage?: string;
   gears: Gear[];
   resources: Resource[];
+  teamReservation?: { status: "reserved" | "upcoming" | "free" };
+}
+
+type AvailabilityFilter = "all" | "available" | "full";
+type TypeFilter = "all" | "slot" | "open";
+
+// "Available" = open for students right now: not in maintenance, not held by a
+// team, and something (a free court/table, or gear when there are no courts) is free.
+function isAvailableNow(sport: Sport): boolean {
+  if (sport.maintenance) return false;
+  if (sport.teamReservation?.status === "reserved") return false;
+  const resources = sport.resources ?? [];
+  if (resources.length) return resources.some((r) => r.status === "available");
+  return (sport.gears ?? []).some((g) => g.availableQuantity > 0);
 }
 
 export default function SportsPage() {
   const [sports, setSports] = useState<Sport[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>("all");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [hoveredSportId, setHoveredSportId] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchSports = async () => {
       try {
         const response = await fetch(
-          "http://127.0.0.1:5000/sports"
+          `${API_BASE_URL}/sports`
         );
 
         if (!response.ok) {
@@ -64,8 +81,6 @@ export default function SportsPage() {
             ? data.sports
             : [];
 
-        console.log("SPORTS API DATA:", sportsData);
-
         setSports(sportsData);
       } catch (error) {
         console.error("Failed to fetch sports:", error);
@@ -78,9 +93,45 @@ export default function SportsPage() {
     fetchSports();
   }, []);
 
-  const filteredSports = sports.filter((sport) =>
-    sport.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredSports = sports.filter((sport) => {
+    if (!sport.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    if (typeFilter === "slot" && !sport.hasSlotSystem) return false;
+    if (typeFilter === "open" && sport.hasSlotSystem) return false;
+    if (availabilityFilter !== "all") {
+      const available = isAvailableNow(sport);
+      if (availabilityFilter === "available" && !available) return false;
+      if (availabilityFilter === "full" && available) return false;
+    }
+    return true;
+  });
+
+  const filterGroups: {
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+    options: { value: string; label: string }[];
+  }[] = [
+    {
+      label: "Availability",
+      value: availabilityFilter,
+      onChange: (value) => setAvailabilityFilter(value as AvailabilityFilter),
+      options: [
+        { value: "all", label: "All" },
+        { value: "available", label: "Available now" },
+        { value: "full", label: "Full / closed" },
+      ],
+    },
+    {
+      label: "Type",
+      value: typeFilter,
+      onChange: (value) => setTypeFilter(value as TypeFilter),
+      options: [
+        { value: "all", label: "All types" },
+        { value: "slot", label: "Slot-based" },
+        { value: "open", label: "Open" },
+      ],
+    },
+  ];
 
   if (loading) {
     return (
@@ -267,6 +318,36 @@ export default function SportsPage() {
           </motion.div>
         </div>
 
+        <div className="mb-8 flex flex-wrap gap-x-6 gap-y-3">
+          {filterGroups.map((group) => (
+            <div
+              key={group.label}
+              role="group"
+              aria-label={group.label}
+              className="flex flex-wrap gap-2"
+            >
+              {group.options.map((option) => {
+                const active = group.value === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => group.onChange(option.value)}
+                    className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${
+                      active
+                        ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300"
+                        : "border-zinc-800 bg-zinc-900/70 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+
         {/* =====================================================
             SPORTS
         ===================================================== */}
@@ -385,7 +466,7 @@ export default function SportsPage() {
               </p>
 
               <p className="mt-2 text-zinc-500">
-                Try searching for another sport.
+                Try another search or change the filters.
               </p>
             </motion.div>
           )}

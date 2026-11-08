@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -16,10 +15,9 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
-  Sparkles,
 } from "lucide-react";
 
-import { clearUser, getUser } from "@/lib/auth";
+import { clearUser, useStoredUser } from "@/lib/auth";
 import { useSuggestionUnread } from "@/lib/suggestions";
 
 interface SidebarProps {
@@ -71,12 +69,8 @@ export default function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
+  const user = useStoredUser();
   const unreadSuggestions = useSuggestionUnread();
-
-  useEffect(() => {
-    setUser(getUser());
-  }, []);
 
   const portalLabel =
     user?.role === "admin"
